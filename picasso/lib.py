@@ -1,5 +1,5 @@
 """
-    picasso/lib
+    /lib
     ~~~~~~~~~~~~~~~~~~~~
 
     Handy functions and classes
@@ -17,7 +17,7 @@ import collections as _collections
 import glob as _glob
 import os.path as _ospath
 from picasso import io as _io
-from PyQt5 import QtGui, QtCore, QtWidgets
+# from PyQt5 import QtGui, QtCore, QtWidgets
 from lmfit import Model as _Model
 
 
@@ -27,43 +27,43 @@ from lmfit import Model as _Model
 _dialogs = []
 
 
-class ProgressDialog(QtWidgets.QProgressDialog):
-    def __init__(self, description, minimum, maximum, parent):
-        super().__init__(
-            description,
-            None,
-            minimum,
-            maximum,
-            parent,
-            QtCore.Qt.CustomizeWindowHint,
-        )
-        _dialogs.append(self)
-        self.setMinimumDuration(500)
-        self.setModal(True)
-        self.app = QtCore.QCoreApplication.instance()
+# class ProgressDialog(QtWidgets.QProgressDialog):
+#     def __init__(self, description, minimum, maximum, parent):
+#         super().__init__(
+#             description,
+#             None,
+#             minimum,
+#             maximum,
+#             parent,
+#             QtCore.Qt.CustomizeWindowHint,
+#         )
+#         _dialogs.append(self)
+#         self.setMinimumDuration(500)
+#         self.setModal(True)
+#         self.app = QtCore.QCoreApplication.instance()
 
-    def set_value(self, value):
-        self.setValue(value)
-        self.app.processEvents()
+#     def set_value(self, value):
+#         self.setValue(value)
+#         self.app.processEvents()
 
-    def closeEvent(self, event):
-        _dialogs.remove(self)
+#     def closeEvent(self, event):
+#         _dialogs.remove(self)
 
 
-class StatusDialog(QtWidgets.QDialog):
-    def __init__(self, description, parent):
-        super(StatusDialog, self).__init__(
-            parent, QtCore.Qt.CustomizeWindowHint
-        )
-        _dialogs.append(self)
-        vbox = QtWidgets.QVBoxLayout(self)
-        label = QtWidgets.QLabel(description)
-        vbox.addWidget(label)
-        self.show()
-        QtCore.QCoreApplication.instance().processEvents()
+# class StatusDialog(QtWidgets.QDialog):
+#     def __init__(self, description, parent):
+#         super(StatusDialog, self).__init__(
+#             parent, QtCore.Qt.CustomizeWindowHint
+#         )
+#         _dialogs.append(self)
+#         vbox = QtWidgets.QVBoxLayout(self)
+#         label = QtWidgets.QLabel(description)
+#         vbox.addWidget(label)
+#         self.show()
+#         QtCore.QCoreApplication.instance().processEvents()
 
-    def closeEvent(self, event):
-        _dialogs.remove(self)
+#     def closeEvent(self, event):
+#         _dialogs.remove(self)
 
 
 class AutoDict(_collections.defaultdict):
@@ -78,14 +78,14 @@ class AutoDict(_collections.defaultdict):
         super().__init__(AutoDict, *args, **kwargs)
 
 
-def cancel_dialogs():
-    dialogs = [_ for _ in _dialogs]
-    for dialog in dialogs:
-        if isinstance(dialog, ProgressDialog):
-            dialog.cancel()
-        else:
-            dialog.close()
-    QtCore.QCoreApplication.instance().processEvents()  # just in case...
+# def cancel_dialogs():
+#     dialogs = [_ for _ in _dialogs]
+#     for dialog in dialogs:
+#         if isinstance(dialog, ProgressDialog):
+#             dialog.cancel()
+#         else:
+#             dialog.close()
+#     QtCore.QCoreApplication.instance().processEvents()  # just in case...
 
 
 def cumulative_exponential(x, a, t, c):

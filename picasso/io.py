@@ -1,5 +1,5 @@
 """
-    picasso.io
+    .io
     ~~~~~~~~~~
 
     General purpose library for handling input and output of files
@@ -17,8 +17,8 @@ import struct as _struct
 import json as _json
 import os as _os
 import threading as _threading
-from PyQt5.QtWidgets import QMessageBox as _QMessageBox
-from . import lib as _lib
+# from PyQt5.QtWidgets import QMessageBox as _QMessageBox
+from picasso import lib as _lib
 
 
 class NoMetadataFileError(FileNotFoundError):
@@ -102,13 +102,13 @@ def load_info(path, qt_parent=None):
                 filename
             )
         )
-        if qt_parent is not None:
-            _QMessageBox.critical(
-                qt_parent,
-                "An error occured",
-                "Could not find metadata file:\n{}".format(filename),
-            )
-        raise NoMetadataFileError(e)
+        # if qt_parent is not None:
+        #     _QMessageBox.critical(
+        #         qt_parent,
+        #         "An error occured",
+        #         "Could not find metadata file:\n{}".format(filename),
+        #     )
+        # raise NoMetadataFileError(e)
     return info
 
 
@@ -573,6 +573,16 @@ def load_locs(path, qt_parent=None):
     )  # Convert to rec array with fields as attributes
     info = load_info(path, qt_parent=qt_parent)
     return locs, info
+
+
+def load_spots(path, qt_parent=None):
+    with _h5py.File(path, "r") as spots_file:
+        spots = spots_file["spots"][...]
+    spots = _np.rec.array(
+        spots, dtype=spots.dtype
+    )  # Convert to rec array with fields as attributes
+    info = load_info(path, qt_parent=qt_parent)
+    return spots, info
 
 
 def load_clusters(path, qt_parent=None):

@@ -24,9 +24,9 @@ import matplotlib.pyplot as _plt
 import itertools as _itertools
 import lmfit as _lmfit
 from collections import OrderedDict as _OrderedDict
-from . import lib as _lib
-from . import render as _render
-from . import imageprocess as _imageprocess
+from picasso import lib as _lib
+from picasso import render as _render
+from picasso import imageprocess as _imageprocess
 from threading import Thread as _Thread
 import time as _time
 from tqdm import tqdm as _tqdm
@@ -296,6 +296,8 @@ def pair_correlation(locs, info, bin_size, r_max):
 
 
 def dbscan(locs, radius, min_density):
+    from sklearn.cluster import DBSCAN as _DBSCAN
+
     print("Identifying clusters...")
     if hasattr(locs, "z"):
         print("z-coordinates detected")
