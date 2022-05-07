@@ -2,7 +2,7 @@
 Some rudimentary tests.
 """
 
-from picasso import __main__ as main
+from picasso.picasso import __main__ as main
 
 
 def test_localize():

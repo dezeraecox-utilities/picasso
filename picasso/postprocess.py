@@ -24,9 +24,9 @@ import matplotlib.pyplot as _plt
 import itertools as _itertools
 import lmfit as _lmfit
 from collections import OrderedDict as _OrderedDict
-from picasso import lib as _lib
-from picasso import render as _render
-from picasso import imageprocess as _imageprocess
+from picasso.picasso import lib as _lib
+from picasso.picasso import render as _render
+from picasso.picasso import imageprocess as _imageprocess
 from threading import Thread as _Thread
 import time as _time
 from tqdm import tqdm as _tqdm

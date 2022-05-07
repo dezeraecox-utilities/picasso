@@ -18,7 +18,7 @@ import json as _json
 import os as _os
 import threading as _threading
 # from PyQt5.QtWidgets import QMessageBox as _QMessageBox
-from picasso import lib as _lib
+from picasso.picasso import lib as _lib
 
 
 class NoMetadataFileError(FileNotFoundError):

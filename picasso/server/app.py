@@ -26,7 +26,7 @@ from sqlalchemy import create_engine
 import pandas as pd
 from datetime import datetime
 
-from picasso import localize
+from picasso.picasso import localize
 from status import status
 from preview import preview
 from history import history

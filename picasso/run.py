@@ -4,14 +4,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from picasso.gaussmle import locs_from_fits
-from picasso.io import (TiffMap, load_locs, load_spots, load_tif,
+from picasso.picasso.gaussmle import locs_from_fits
+from picasso.picasso.io import (TiffMap, load_locs, load_spots, load_tif,
                             save_datasets, save_locs)
-from picasso.localize import (fit, fit_async, get_spots,
+from picasso.picasso.localize import (fit, fit_async, get_spots,
                                   identifications_from_futures, identify,
                                   localize, locs_from_fits)
-from picasso.postprocess import undrift
-from picasso.render import render
+from picasso.picasso.postprocess import undrift
+from picasso.picasso.render import render
 import time
 from asyncio import wait
 # from skimage import io

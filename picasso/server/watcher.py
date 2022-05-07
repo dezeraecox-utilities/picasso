@@ -7,7 +7,7 @@ from multiprocessing import Process
 import time
 from collections import namedtuple
 from sqlalchemy import create_engine
-from picasso import localize
+from picasso.picasso import localize
 from helper import fetch_watcher
 import psutil
 

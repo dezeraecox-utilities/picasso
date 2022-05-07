@@ -106,7 +106,7 @@ Example Usage
 -------------
 Besides using the GUI, you can use picasso like any other Python module. Consider the following example:::
 
-  from picasso import io, postprocess
+  from picasso.picasso import io, postprocess
 
   path = 'testdata_locs.hdf5'
   locs, info = io.load_locs(path)

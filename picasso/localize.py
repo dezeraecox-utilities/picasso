@@ -15,8 +15,8 @@ from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 import threading as _threading
 from itertools import chain as _chain
 import matplotlib.pyplot as _plt
-from picasso import gaussmle as _gaussmle
-from picasso import io as _io
+from picasso.picasso import gaussmle as _gaussmle
+from picasso.picasso import io as _io
 
 
 _C_FLOAT_POINTER = _ctypes.POINTER(_ctypes.c_float)
