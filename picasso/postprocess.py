@@ -446,7 +446,7 @@ def dbscan(locs, radius, min_density):
         )
     return clusters, locs
 
-def hdbscan(locs, min_cluster_size, min_samples):
+def hdbscan(locs, min_cluster_size, min_samples, cluster_selection_epsilon=0.5, cluster_selection_method='eom'):
 
     from hdbscan import HDBSCAN as _HDBSCAN
 
@@ -459,7 +459,7 @@ def hdbscan(locs, min_cluster_size, min_samples):
         ]
         X = _np.vstack((locs.x, locs.y, locs.z / pixelsize)).T
         hdb = _HDBSCAN(
-            min_samples=min_samples, min_cluster_size=min_cluster_size
+            min_samples=min_samples, min_cluster_size=min_cluster_size, cluster_selection_epsilon=cluster_selection_epsilon, cluster_selection_method=cluster_selection_method
         ).fit(X)
         group = _np.int32(hdb.labels_)  # int32 for Origin compatiblity
         locs = _lib.append_to_rec(locs, group, "group")
