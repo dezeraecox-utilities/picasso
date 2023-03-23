@@ -25,6 +25,8 @@ from datetime import datetime
 from sqlalchemy import create_engine
 import pandas as pd
 
+MAX_LOCS = int(1e6)
+
 _C_FLOAT_POINTER = _ctypes.POINTER(_ctypes.c_float)
 LOCS_DTYPE = [
     ("frame", "u4"),
