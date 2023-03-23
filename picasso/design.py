@@ -8,7 +8,7 @@
     :copyright: Copyright (c) 2016-2018 Jungmann Lab, MPI of Biochemistry
 """
 import csv
-from . import io as _io
+from picasso.picasso import io as _io
 
 
 def saveInfo(filename, info):

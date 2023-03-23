@@ -2039,7 +2039,7 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     window = Window()
 
-    from . import plugins
+    from picasso.picasso import plugins
 
     def iter_namespace(pkg):
         return pkgutil.iter_modules(pkg.__path__, pkg.__name__ + ".")

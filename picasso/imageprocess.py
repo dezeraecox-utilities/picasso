@@ -12,7 +12,7 @@ import numpy as _np
 from numpy import fft as _fft
 import lmfit as _lmfit
 from tqdm import tqdm as _tqdm
-from . import lib as _lib
+from picasso.picasso import lib as _lib
 
 
 _plt.style.use("ggplot")

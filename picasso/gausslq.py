@@ -15,7 +15,7 @@ from tqdm import tqdm as _tqdm
 import numba as _numba
 import multiprocessing as _multiprocessing
 from concurrent import futures as _futures
-from . import postprocess as _postprocess
+from picasso.picasso import postprocess as _postprocess
 
 try:
     from pygpufit import gpufit as gf
