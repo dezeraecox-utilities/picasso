@@ -24,7 +24,7 @@ from nd2reader.label_map import LabelMap
 from nd2reader.raw_metadata import RawMetadata
 from nd2reader.common_raw_metadata import parse_roi_shape, parse_roi_type, parse_dimension_text_line
 # from PyQt5.QtWidgets import QMessageBox as _QMessageBox
-from picasso.picasso import lib as _lib
+from . import lib as _lib
 
 from .ext import bitplane
 

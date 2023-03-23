@@ -180,14 +180,14 @@ def _hdf2csv(path):
 def _link(files, d_max, tolerance):
     import numpy as _np
     from tqdm import tqdm as _tqdm
-    from picasso.picasso import lib as _lib
+    from . import lib as _lib
     from h5py import File
 
     import glob
 
     paths = glob.glob(files)
     if paths:
-        from picasso.picasso import io, postprocess
+        from . import io, postprocess
 
         for path in paths:
             try:
@@ -255,7 +255,7 @@ def _cluster_combine(files):
 
     paths = glob.glob(files)
     if paths:
-        from picasso.picasso import io, postprocess
+        from . import io, postprocess
 
         for path in paths:
             try:
@@ -274,7 +274,7 @@ def _cluster_combine_dist(files):
 
     paths = glob.glob(files)
     if paths:
-        from picasso.picasso import io, postprocess
+        from . import io, postprocess
 
         for path in paths:
             try:
@@ -295,7 +295,7 @@ def _clusterfilter(files, clusterfile, parameter, minval, maxval):
 
     paths = glob(files)
     if paths:
-        from picasso.picasso import io
+        from . import io
 
         for path in paths:
             try:
@@ -367,7 +367,7 @@ def _clusterfilter(files, clusterfile, parameter, minval, maxval):
 
 def _undrift(files, segmentation, display=True, fromfile=None):
     import glob
-    from picasso.picasso import io, postprocess
+    from . import io, postprocess
     from numpy import genfromtxt, savetxt
 
     paths = glob.glob(files)
@@ -426,7 +426,7 @@ def _density(files, radius):
 
     paths = glob.glob(files)
     if paths:
-        from picasso.picasso import io, postprocess
+        from . import io, postprocess
 
         for path in paths:
             locs, info = io.load_locs(path)
@@ -445,7 +445,7 @@ def _dbscan(files, radius, min_density):
 
     paths = glob.glob(files)
     if paths:
-        from picasso.picasso import io, clusterer
+        from . import io, clusterer
         pixelsize = int(input("Enter the camera pixelsize in nm: "))
 
         for path in paths:
@@ -474,7 +474,7 @@ def _hdbscan(files, min_cluster, min_samples):
 
     paths = glob.glob(files)
     if paths:
-        from picasso.picasso import io, clusterer
+        from . import io, clusterer
         pixelsize = int(input("Enter the camera pixelsize in nm: "))
 
         for path in paths:
@@ -502,7 +502,7 @@ def _smlm_clusterer(files, radius, min_locs, basic_fa=False, radius_z=None):
 
     paths = glob.glob(files)
     if paths:
-        from picasso.picasso import io, clusterer
+        from . import io, clusterer
         pixelsize = int(input("Enter the camera pixelsize in nm: "))
         if radius_z is not None: # 3D
             params = [radius, radius_z, min_locs, 0, basic_fa, 0]
@@ -560,7 +560,7 @@ def _dark(files):
 
     paths = glob.glob(files)
     if paths:
-        from picasso.picasso import io, postprocess
+        from . import io, postprocess
 
         for path in paths:
             locs, info = io.load_locs(path)
@@ -762,7 +762,7 @@ def _localize(args):
     )
     from os.path import splitext, isdir
     from time import sleep
-    from picasso.picasso import gausslq, avgroi
+    from . import gausslq, avgroi
     import os.path as _ospath
     import re as _re
     import os as _os
@@ -873,7 +873,7 @@ def _localize(args):
             max_iterations = 0
 
         if args.fit_method == "lq-3d" or args.fit_method == "lq-gpu-3d":
-            from picasso.picasso import zfit
+            from . import zfit
 
             print("------------------------------------------")
             print("Fitting 3D")

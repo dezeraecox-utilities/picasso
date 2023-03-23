@@ -4,9 +4,9 @@ from sqlalchemy import create_engine
 import pandas as pd
 import os
 import numpy as np
-from picasso.picasso import io
-from picasso.picasso import render
-from picasso.picasso import lib
+from . import io
+from . import render
+from . import lib
 import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go

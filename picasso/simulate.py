@@ -8,7 +8,7 @@
     :copyright: Copyright (c) 2016-2018 Jungmann Lab, MPI of Biochemistry
 """
 import numpy as _np
-from picasso.picasso import io as _io
+from . import io as _io
 from numba import njit
 
 magfac = 0.79

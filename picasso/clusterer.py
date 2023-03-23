@@ -16,7 +16,7 @@ from scipy.spatial import cKDTree as _cKDTree
 from scipy.spatial import ConvexHull as _ConvexHull
 from sklearn.cluster import DBSCAN as _DBSCAN
 
-from picasso.picasso import lib as _lib
+from . import lib as _lib
 
 CLUSTER_CENTERS_DTYPE_2D = [
     ("frame", "f4"),

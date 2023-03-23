@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm as tqdm
 from scipy import ndimage
 
-from picasso.picasso import render, lib
+from . import render, lib
 
 
 def prepare_img(img, img_shape, alpha=1, bg=0):

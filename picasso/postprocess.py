@@ -25,10 +25,10 @@ import matplotlib.pyplot as _plt
 import itertools as _itertools
 import lmfit as _lmfit
 from collections import OrderedDict as _OrderedDict
-from picasso.picasso import lib as _lib
-from picasso.picasso import render as _render
-from picasso.picasso import imageprocess as _imageprocess
-from picasso.picasso import clusterer as _clusterer
+from . import lib as _lib
+from . import render as _render
+from . import imageprocess as _imageprocess
+from . import clusterer as _clusterer
 from threading import Thread as _Thread
 import time as _time
 from tqdm import tqdm as _tqdm

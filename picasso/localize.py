@@ -16,10 +16,10 @@ from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 import threading as _threading
 from itertools import chain as _chain
 import matplotlib.pyplot as _plt
-from picasso.picasso import gaussmle as _gaussmle
-from picasso.picasso import io as _io
-from picasso.picasso import postprocess as _postprocess
-from picasso.picasso import __main__ as main
+from . import gaussmle as _gaussmle
+from . import io as _io
+from . import postprocess as _postprocess
+from . import __main__ as main
 import os
 from datetime import datetime
 from sqlalchemy import create_engine

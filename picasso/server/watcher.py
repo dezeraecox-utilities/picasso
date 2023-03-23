@@ -4,7 +4,7 @@ import pandas as pd
 from multiprocessing import Process
 import time
 from sqlalchemy import create_engine
-from picasso.picasso import localize
+from . import localize
 from helper import fetch_watcher, fetch_db
 import psutil
 import subprocess

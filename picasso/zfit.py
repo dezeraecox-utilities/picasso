@@ -7,7 +7,7 @@ from scipy.optimize import minimize_scalar as _minimize_scalar
 from tqdm import tqdm as _tqdm
 import yaml as _yaml
 import matplotlib.pyplot as _plt
-from picasso.picasso import lib as _lib
+from . import lib as _lib
 
 
 _plt.style.use("ggplot")

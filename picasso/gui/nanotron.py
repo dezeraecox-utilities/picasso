@@ -1319,7 +1319,7 @@ def main():
     app.setWindowIcon(QIcon(icon_path))
     window = Window()
 
-    from picasso.picasso import plugins
+    from . import plugins
 
     def iter_namespace(pkg):
         return pkgutil.iter_modules(pkg.__path__, pkg.__name__ + ".")

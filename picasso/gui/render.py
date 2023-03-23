@@ -12072,7 +12072,7 @@ def main():
     window.plugins = []
 
     # load plugins from picasso/gui/plugins
-    from picasso.picasso import plugins
+    from . import plugins
 
     def iter_namespace(pkg):
         return pkgutil.iter_modules(pkg.__path__, pkg.__name__ + ".")

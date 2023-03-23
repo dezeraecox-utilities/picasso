@@ -1,6 +1,6 @@
 import streamlit as st
 from helper import fetch_db
-from picasso.picasso import localize
+from . import localize
 import pandas as pd
 from sqlalchemy import create_engine
 import os

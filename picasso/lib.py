@@ -16,7 +16,7 @@ from numpy.lib.recfunctions import drop_fields as _drop_fields
 import collections as _collections
 import glob as _glob
 import os.path as _ospath
-from picasso.picasso import io as _io
+from . import io as _io
 # from PyQt5 import QtGui, QtCore, QtWidgets
 from lmfit import Model as _Model
 
