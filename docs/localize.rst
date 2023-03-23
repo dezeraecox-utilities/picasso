@@ -9,12 +9,14 @@ Localize allows performing super-resolution reconstruction of image stacks. For 
 
 - MLE, integrated Gaussian (based on `Smith et al., 2014 <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2862147/>`_.)
 - LQ, Gaussian (least squares)
-- Average of ROI
+- Average of ROI (finds summed intensity of spots)
+
+**Please note:** Picasso Localize supports five file formats: ``.ome.tif``, ``NDTiffStack`` with extension ``.tif``, ``.raw``, ``.ims`` and ``.nd2``. If your file has the extension ``.tiff`` or ``.ome.tiff``, it cannot be read. Usually it is enough to change the extension to ``.ome.tif``, i.e., remove the last letter.
 
 Identification and fitting of single-molecule spots
 ---------------------------------------------------
 
-1. In ``Picasso: Localize``, open a movie file by dragging the file into the window or by selecting ``File`` > ``Open``. If the movie is split into multiple μManager .tif files, open only the first file. Picasso will automatically detect the remaining files according to their file names. When opening a .raw file, a dialog will appear for file specifications.
+1. In ``Picasso: Localize``, open a movie file by dragging the file into the window or by selecting ``File`` > ``Open movie``. If the movie is split into multiple μManager .tif files, open only the first file. Picasso will automatically detect the remaining files according to their file names. When opening a .raw file, a dialog will appear for file specifications. When opening an IMS file it should be displayed immediately in the localize window. When opening an IMS file with multiple channels, a dialog window will appear allowing you to select the channel that should be loaded. You can navigate through the file using the arrow keys on your keyboard. The current frame is displayed in the lower right corner.
 2. Adjust the image contrast (select ``View`` > ``Contrast``) so that the single-molecule spots are clearly visible.
 3. To adjust spot identification and fit parameters, open the ``Parameters`` dialog (select ``Analyze`` > ``Parameters``).
 4. In the ``Identification`` group, set the ``Box side length`` to the rounded integer value of 6 × σ + 1, where σ is the standard deviation of the PSF. In an optimized microscope setup, σ is one pixel, and the respective ``Box side length`` should be set to 7. The value of ``Min. net gradient`` specifies a minimum threshold above which spots should be considered for fitting. The net gradient value of a spot is roughly proportional to its intensity, independent of its local background. By checking ``Preview``, the spots identified with the current settings will be marked in the displayed frame. Adjust ``Min. net gradient`` to a value at which only spots are detected (no background).

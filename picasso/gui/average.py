@@ -11,6 +11,7 @@ import os.path
 import sys
 import time
 import traceback
+import importlib, pkgutil
 from multiprocessing import sharedctypes
 
 import matplotlib.pyplot as plt
@@ -106,7 +107,9 @@ class Worker(QtCore.QThread):
         n_groups = self.group_index.shape[0]
         a_step = np.arcsin(1 / (self.oversampling * self.r))
         angles = np.arange(0, 2 * np.pi, a_step)
-        n_workers = max(1, int(0.75 * multiprocessing.cpu_count()))
+        n_workers = min(
+            60, max(1, int(0.75 * multiprocessing.cpu_count()))
+        ) # Python crashes when using >64 cores
         manager = multiprocessing.Manager()
         counter = manager.Value("d", 0)
         lock = manager.Lock()
@@ -230,9 +233,7 @@ class View(QtWidgets.QLabel):
         if update_image:
             self.update_image()
         self.window.status_bar.showMessage(
-            "Iteration {:,}/{:,}, Group {:,}/{:,}".format(
-                it, total_it, g, n_groups
-            )
+            "Iteration {:,}/{:,}, Group {:,}/{:,}".format(it, total_it, g, n_groups)
         )
 
     def open(self, path):
@@ -244,12 +245,8 @@ class View(QtWidgets.QLabel):
         groups = np.unique(self.locs.group)
         n_groups = len(groups)
         n_locs = len(self.locs)
-        self.group_index = scipy.sparse.lil_matrix(
-            (n_groups, n_locs), dtype=np.bool
-        )
-        progress = lib.ProgressDialog(
-            "Creating group index", 0, len(groups), self
-        )
+        self.group_index = scipy.sparse.lil_matrix((n_groups, n_locs), dtype=np.bool)
+        progress = lib.ProgressDialog("Creating group index", 0, len(groups), self)
         progress.set_value(0)
         for i, group in enumerate(groups):
             index = np.where(self.locs.group == group)[0]
@@ -264,7 +261,7 @@ class View(QtWidgets.QLabel):
             self.locs.x[index] -= np.mean(self.locs.x[index])
             self.locs.y[index] -= np.mean(self.locs.y[index])
             progress.set_value(i + 1)
-        self.r = 2 * np.sqrt(np.mean(self.locs.x ** 2 + self.locs.y ** 2))
+        self.r = 2 * np.sqrt(np.mean(self.locs.x**2 + self.locs.y**2))
         self.update_image()
         status = lib.StatusDialog("Starting parallel pool...", self.window)
         global pool, x, y
@@ -274,10 +271,10 @@ class View(QtWidgets.QLabel):
             pass
         x = sharedctypes.RawArray("f", self.locs.x)
         y = sharedctypes.RawArray("f", self.locs.y)
-        n_workers = max(1, int(0.75 * multiprocessing.cpu_count()))
-        pool = multiprocessing.Pool(
-            n_workers, init_pool, (x, y, self.group_index)
-        )
+        n_workers = min(
+            60, max(1, int(0.75 * multiprocessing.cpu_count()))
+        ) # Python crashes when using >64 cores
+        pool = multiprocessing.Pool(n_workers, init_pool, (x, y, self.group_index))
         self.window.status_bar.showMessage("Ready for processing!")
         status.close()
 
@@ -380,14 +377,29 @@ def main():
 
     app = QtWidgets.QApplication(sys.argv)
     window = Window()
+
+    from . import plugins
+
+    def iter_namespace(pkg):
+        return pkgutil.iter_modules(pkg.__path__, pkg.__name__ + ".")
+
+    plugins = [
+        importlib.import_module(name)
+        for finder, name, ispkg
+        in iter_namespace(plugins)
+    ]
+
+    for plugin in plugins:
+        p = plugin.Plugin(window)
+        if p.name == "average":
+            p.execute()  
+              
     window.show()
 
     def excepthook(type, value, tback):
         lib.cancel_dialogs()
         message = "".join(traceback.format_exception(type, value, tback))
-        errorbox = QtWidgets.QMessageBox.critical(
-            window, "An error occured", message
-        )
+        errorbox = QtWidgets.QMessageBox.critical(window, "An error occured", message)
         errorbox.exec_()
         sys.__excepthook__(type, value, tback)
 

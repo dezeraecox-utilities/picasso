@@ -9,8 +9,7 @@
     :copyright: Copyright (c) 2015 Jungmann Lab, MPI of Biochemistry
 """
 
-import sys
-import os
+import sys, os, importlib, pkgutil
 import os.path
 from PyQt5 import QtCore, QtGui, QtWidgets
 import traceback
@@ -144,14 +143,29 @@ class Worker(QtCore.QThread):
 def main():
     app = QtWidgets.QApplication(sys.argv)
     window = Window()
+
+    from . import plugins
+
+    def iter_namespace(pkg):
+        return pkgutil.iter_modules(pkg.__path__, pkg.__name__ + ".")
+
+    plugins = [
+        importlib.import_module(name)
+        for finder, name, ispkg
+        in iter_namespace(plugins)
+    ]
+
+    for plugin in plugins:
+        p = plugin.Plugin(window)
+        if p.name == "toraw":
+            p.execute()
+
     window.show()
 
     def excepthook(type, value, tback):
         lib.cancel_dialogs()
         message = "".join(traceback.format_exception(type, value, tback))
-        errorbox = QtWidgets.QMessageBox.critical(
-            window, "An error occured", message
-        )
+        errorbox = QtWidgets.QMessageBox.critical(window, "An error occured", message)
         errorbox.exec_()
         sys.__excepthook__(type, value, tback)
 

@@ -16,7 +16,9 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 import time
 import numpy as np
 import traceback
+import importlib, pkgutil
 from .. import io, localize, gausslq, gaussmle, zfit, lib, CONFIG, avgroi
+from collections import UserDict
 
 try:
     from pygpufit import gpufit as gf
@@ -45,7 +47,7 @@ class RubberBand(QtWidgets.QRubberBand):
 
 
 class View(QtWidgets.QGraphicsView):
-    """ The central widget which shows `Scene` objects of individual frames """
+    """The central widget which shows `Scene` objects of individual frames"""
 
     def __init__(self, window):
         super().__init__(window)
@@ -60,9 +62,7 @@ class View(QtWidgets.QGraphicsView):
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             self.roi_origin = QtCore.QPoint(event.pos())
-            self.rubberband.setGeometry(
-                QtCore.QRect(self.roi_origin, QtCore.QSize())
-            )
+            self.rubberband.setGeometry(QtCore.QRect(self.roi_origin, QtCore.QSize()))
             self.rubberband.show()
         elif event.button() == QtCore.Qt.RightButton:
             self.pan = True
@@ -75,9 +75,7 @@ class View(QtWidgets.QGraphicsView):
 
     def mouseMoveEvent(self, event):
         if event.buttons() == QtCore.Qt.LeftButton:
-            self.rubberband.setGeometry(
-                QtCore.QRect(self.roi_origin, event.pos())
-            )
+            self.rubberband.setGeometry(QtCore.QRect(self.roi_origin, event.pos()))
         if self.pan:
             self.hscrollbar.setValue(
                 self.hscrollbar.value() - event.x() + self.pan_start_x
@@ -114,14 +112,14 @@ class View(QtWidgets.QGraphicsView):
             event.ignore()
 
     def wheelEvent(self, event):
-        """ Implements zoooming with the mouse wheel """
+        """Implements zoooming with the mouse wheel"""
         scale = 1.008 ** (-event.angleDelta().y())
         self.scale(scale, scale)
 
 
 class Scene(QtWidgets.QGraphicsScene):
     """
-    Scenes render indivdual frames and can be displayed in a `View` widget
+    Scenes render individual frames and can be displayed in a `View` widget
     """
 
     def __init__(self, window, parent=None):
@@ -139,7 +137,8 @@ class Scene(QtWidgets.QGraphicsScene):
         if not event.mimeData().hasUrls():
             return False
         path, extension = self.path_from_drop(event)
-        if extension.lower() not in [".raw", ".tif"]:
+
+        if extension.lower() not in [".raw", ".tif", ".ims", ".nd2"]:
             return False
         return True
 
@@ -150,7 +149,7 @@ class Scene(QtWidgets.QGraphicsScene):
             event.ignore()
 
     def dropEvent(self, event):
-        """ Loads  when dropped into the scene """
+        """Loads  when dropped into the scene"""
         path, extension = self.path_from_drop(event)
         self.window.open(path)
 
@@ -168,7 +167,7 @@ class FitMarker(QtWidgets.QGraphicsItemGroup):
 
 
 class OddSpinBox(QtWidgets.QSpinBox):
-    """ A spinbox that allows only odd numbers """
+    """A spinbox that allows only odd numbers"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -182,11 +181,26 @@ class OddSpinBox(QtWidgets.QSpinBox):
 
 
 class CamSettingComboBox(QtWidgets.QComboBox):
-    def __init__(self, cam_combos, camera, index):
+    """
+    Attributes:
+        cam_combos : dict
+            keys: possible cameras
+            values: list of CamSettingComboBoxes; one for each
+                sensitivity category, described in the CONFIG entry for the
+                respective camera.
+        camera : str
+            camera name this CamSettingComboBox belongs to
+        categories : list of str
+            the sensitivity categories of the camera
+        index : int
+            the index of sensitivity category this CamSettingComboBox belongs to
+    """
+    def __init__(self, cam_combos, camera, index, sensitivity_categories=[]):
         super().__init__()
         self.cam_combos = cam_combos
         self.camera = camera
         self.index = index
+        self.categories = sensitivity_categories
 
     def change_target_choices(self, index):
         cam_combos = self.cam_combos[self.camera]
@@ -200,6 +214,91 @@ class CamSettingComboBox(QtWidgets.QComboBox):
         target.addItems(sorted(list(sensitivity.keys())))
 
 
+class CamSettingComboBoxDict(UserDict):
+    """Dictionary holding CamSettingComboBoxes for different cameras and
+    sensitivity categories.
+    keys: str
+        cameras
+    values: List of CamSettingComboBoxes, one for each sensitivity category
+        of this camera
+
+    further attributes:
+        sensitivity_categories : dict
+            keys: cameras
+            values: list of str: the categories
+    """
+    def __init__(self):
+        super().__init__()
+        self.sensitivity_categories = {}
+
+    def add_categories(self, cam, categories):
+        """Call this when setting combo boxes for a new camera, to accompany
+        it with the corresponding sensitivity categories.
+        """
+        self.sensitivity_categories[cam] = categories
+
+    def set_camcombo_value(self, cam, category, value):
+        """Sets the value of one combo box
+
+        Args:
+            cam : str
+                the camera to set
+            category : str
+                the category combo box to set
+            value : str
+                the value to set
+        """
+        cat_idx = self.sensitivity_categories[cam].index(category)
+        cam_combo = self.data[cam][cat_idx]
+        for index in range(cam_combo.count()):
+            if cam_combo.itemText(index) == value:
+                cam_combo.setCurrentIndex(index)
+                break
+
+    def set_camcombo_values(self, cam, values):
+        """Sets the values of all combo boxes of a camera
+
+        Args:
+            cam : str
+                the camera to set
+            values : dict
+                keys: sensitivity categories
+                values: the values to set
+        """
+        for i, cat in enumerate(self.sensitivity_categories[cam]):
+            if cat in values:
+                cam_combo = self.data[cam][i]
+                for index in range(cam_combo.count()):
+                    if cam_combo.itemText(index) == values[cat]:
+                        cam_combo.setCurrentIndex(index)
+                        break
+
+
+class EmissionComboBoxDict(UserDict):
+    """Dictionary holding ComboBoxes for different emission wavelenghts.
+    keys: str
+        cameras
+    values: ComboBoxes with wavelengths
+    """
+    def __init__(self):
+        super().__init__()
+
+    def set_emcombo_value(self, cam, wavelength):
+        """Sets the value of one combo box
+
+        Args:
+            cam : str
+                the camera to set
+            wavelength : str
+                the value to set
+        """
+        em_combo = self.data[cam]
+        for index in range(em_combo.count()):
+            if em_combo.itemText(index) == wavelength:
+                em_combo.setCurrentIndex(index)
+                break
+
+
 class PromptInfoDialog(QtWidgets.QDialog):
     def __init__(self, window):
         super().__init__(window)
@@ -209,9 +308,7 @@ class PromptInfoDialog(QtWidgets.QDialog):
         grid = QtWidgets.QGridLayout()
         grid.addWidget(QtWidgets.QLabel("Byte Order:"), 0, 0)
         self.byte_order = QtWidgets.QComboBox()
-        self.byte_order.addItems(
-            ["Little Endian (loads faster)", "Big Endian"]
-        )
+        self.byte_order.addItems(["Little Endian (loads faster)", "Big Endian"])
         grid.addWidget(self.byte_order, 0, 1)
         grid.addWidget(QtWidgets.QLabel("Data Type:"), 1, 0)
         self.dtype = QtWidgets.QComboBox()
@@ -274,8 +371,43 @@ class PromptInfoDialog(QtWidgets.QDialog):
         return (info, save, result == QtWidgets.QDialog.Accepted)
 
 
+class PromptChannelDialog(QtWidgets.QDialog):
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+        self.setWindowTitle("Select channel")
+        vbox = QtWidgets.QVBoxLayout(self)
+        grid = QtWidgets.QGridLayout()
+        grid.addWidget(QtWidgets.QLabel("Channel:"), 0, 0)
+        self.byte_order = QtWidgets.QComboBox()
+
+        grid.addWidget(self.byte_order, 0, 1)
+
+        vbox.addLayout(grid)
+        hbox = QtWidgets.QHBoxLayout()
+        vbox.addLayout(hbox)
+        # OK and Cancel buttons
+        self.buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtCore.Qt.Horizontal,
+            self,
+        )
+        vbox.addWidget(self.buttons)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+
+    # static method to create the dialog and return (date, time, accepted)
+    @staticmethod
+    def getMovieSpecs(parent=None, channels=None):
+        dialog = PromptChannelDialog(parent)
+        dialog.byte_order.addItems(channels)
+        result = dialog.exec_()
+        channel = dialog.byte_order.currentText()
+        return (channel, result == QtWidgets.QDialog.Accepted)
+
+
 class ParametersDialog(QtWidgets.QDialog):
-    """ The dialog showing analysis parameters """
+    """The dialog showing analysis parameters"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -298,7 +430,7 @@ class ParametersDialog(QtWidgets.QDialog):
         identification_grid.addWidget(self.box_spinbox, 0, 1)
 
         # Min. Net Gradient
-        identification_grid.addWidget(QtWidgets.QLabel("Min. Net Gradient:"), 1, 0)
+        identification_grid.addWidget(QtWidgets.QLabel("Min.  Net Gradient:"), 1, 0)
         self.mng_spinbox = QtWidgets.QSpinBox()
         self.mng_spinbox.setRange(0, 1e9)
         self.mng_spinbox.setValue(DEFAULT_PARAMETERS["Min. Net Gradient"])
@@ -337,17 +469,26 @@ class ParametersDialog(QtWidgets.QDialog):
         self.mng_max_spinbox.valueChanged.connect(self.on_mng_max_changed)
         hbox.addWidget(self.mng_max_spinbox)
 
+        # # ROI
+        # identification_grid.addWidget(
+        #     QtWidgets.QLabel("ROI (y_min,x_min,y_max,x_max):"), 4, 0,
+        # )
+        # self.roi_edit = QtWidgets.QLineEdit()
+        # regex = r"\d+,\d+,\d+,\d+" # regex for 4 integers separated by commas
+        # validator = QtGui.QRegExpValidator(QtCore.QRegExp(regex))
+        # self.roi_edit.setValidator(validator)
+        # self.roi_edit.editingFinished.connect(self.on_roi_edit_finished)
+        # identification_grid.addWidget(self.roi_edit, 4, 1)
+        # #TODO: signal when roi_edit is changed: change self.roi and draw rectangle?
+        # #TODO: validate that the input numbers lie within the whole FOV
+        # #TODO: when roi is changed with mouseReleaseEvent in View, change the values displayed here!
+        # #TODO: what about nan?
+
         self.preview_checkbox = QtWidgets.QCheckBox("Preview")
         self.preview_checkbox.setTristate(False)
-        # self.preview_checkbox.setChecked(True)
         self.preview_checkbox.stateChanged.connect(self.on_preview_changed)
         identification_grid.addWidget(self.preview_checkbox, 4, 0)
-
-        #Database addition
-
-        self.database_checkbox = QtWidgets.QCheckBox("Add to Database")
-        self.database_checkbox.setChecked(True)
-        identification_grid.addWidget(self.database_checkbox, 4, 1)
+        # identification_grid.addWidget(self.preview_checkbox, 5, 0)
 
         # Camera:
         if "Cameras" in CONFIG:
@@ -364,8 +505,8 @@ class ParametersDialog(QtWidgets.QDialog):
 
             self.cam_settings = QtWidgets.QStackedWidget()
             exp_grid.addWidget(self.cam_settings, 1, 0, 1, 2)
-            self.cam_combos = {}
-            self.emission_combos = {}
+            self.cam_combos = CamSettingComboBoxDict()
+            self.emission_combos = EmissionComboBoxDict()
             for cam in cameras:
                 cam_widget = QtWidgets.QWidget()
                 cam_grid = QtWidgets.QGridLayout(cam_widget)
@@ -376,14 +517,13 @@ class ParametersDialog(QtWidgets.QDialog):
                     if "Sensitivity Categories" in cam_config:
                         self.cam_combos[cam] = []
                         categories = cam_config["Sensitivity Categories"]
+                        self.cam_combos.add_categories(cam, categories)
                         for i, category in enumerate(categories):
                             row_count = cam_grid.rowCount()
                             cam_grid.addWidget(
                                 QtWidgets.QLabel(category + ":"), row_count, 0
                             )
-                            cat_combo = CamSettingComboBox(
-                                self.cam_combos, cam, i
-                            )
+                            cat_combo = CamSettingComboBox(self.cam_combos, cam, i)
                             cam_grid.addWidget(cat_combo, row_count, 1)
                             self.cam_combos[cam].append(cat_combo)
                         self.cam_combos[cam][0].addItems(
@@ -463,7 +603,7 @@ class ParametersDialog(QtWidgets.QDialog):
         # QE
         photon_grid.addWidget(QtWidgets.QLabel("Pixelsize (nm):"), 4, 0)
         self.pixelsize = QtWidgets.QSpinBox()
-        self.pixelsize.setRange(0, 1000)
+        self.pixelsize.setRange(0, 10000)
         self.pixelsize.setValue(130)
         self.pixelsize.setSingleStep(1)
         photon_grid.addWidget(self.pixelsize, 4, 1)
@@ -478,6 +618,7 @@ class ParametersDialog(QtWidgets.QDialog):
         self.fit_method.addItems(
             ["LQ, Gaussian", "MLE, integrated Gaussian", "Average of ROI"]
         )
+        self.fit_method.setCurrentIndex(0)
         fit_grid.addWidget(self.fit_method, 1, 1)
         fit_stack = QtWidgets.QStackedWidget()
         fit_grid.addWidget(fit_stack, 2, 0, 1, 2)
@@ -511,6 +652,8 @@ class ParametersDialog(QtWidgets.QDialog):
 
         if not gpufit_installed:
             self.gpufit_checkbox.hide()
+        else:
+            self.gpufit_checkbox.setDisabled(False)
         lq_grid.addWidget(self.gpufit_checkbox)
 
         fit_stack.addWidget(lq_widget)
@@ -523,6 +666,7 @@ class ParametersDialog(QtWidgets.QDialog):
         # 3D
         z_groupbox = QtWidgets.QGroupBox("3D via Astigmatism")
         vbox.addWidget(z_groupbox)
+
         z_grid = QtWidgets.QGridLayout(z_groupbox)
         z_grid.addWidget(
             QtWidgets.QLabel("Non-integrated Gaussian fitting is recommend! (LQ)"),
@@ -562,6 +706,90 @@ class ParametersDialog(QtWidgets.QDialog):
                 ):
                     self.update_sensitivity()
 
+        astig_groupbox = QtWidgets.QGroupBox("Astigmatism-Correction")
+        vbox.addWidget(astig_groupbox)
+        astig_grid = QtWidgets.QGridLayout(astig_groupbox)
+        load_astig_calib = QtWidgets.QPushButton("Load correction")
+        load_astig_calib.setAutoDefault(False)
+        load_astig_calib.clicked.connect(self.load_astig_calib)
+
+        astig_groupbox.setVisible(False)
+
+        astig_grid.addWidget(load_astig_calib, 1, 1)
+        self.calib_astig_checkbox = QtWidgets.QCheckBox("Correct Astigmatism")
+        self.calib_astig_checkbox.setEnabled(False)
+
+        astig_grid.addWidget(self.calib_astig_checkbox, 3, 1)
+        self.astig_label = QtWidgets.QLabel("-- no calibration loaded --")
+        self.astig_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.astig_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed
+        )
+        astig_grid.addWidget(self.astig_label, 1, 0)
+
+        self.vbox = vbox
+        self.imsgrid = False
+
+        # Sample quality
+        self.quality_groupbox = QtWidgets.QGroupBox("Sample Quality")
+        vbox.addWidget(self.quality_groupbox)
+
+        self.quality_grid = QtWidgets.QGridLayout(self.quality_groupbox)
+        self.quality_check = QtWidgets.QPushButton(
+            "Estimate and add to database"
+        )
+        self.quality_check.setEnabled(False)
+        self.quality_grid.addWidget(self.quality_check, 1, 2)
+        self.quality_check.clicked.connect(self.check_quality)
+
+        self.quality_grid_labels = [
+            QtWidgets.QLabel("Locs/Frame"),
+            QtWidgets.QLabel("NeNA"),
+            QtWidgets.QLabel("Mean Drift"),
+            QtWidgets.QLabel("Bright Time (Frames)"),
+        ]
+        for idx, _ in enumerate(self.quality_grid_labels):
+            self.quality_grid.addWidget(_, idx + 1, 1)
+
+        self.quality_grid_values = [
+            QtWidgets.QLabel(""),
+            QtWidgets.QLabel(""),
+            QtWidgets.QLabel(""),
+            QtWidgets.QLabel(""),
+        ]
+
+        for idx, _ in enumerate(self.quality_grid_values):
+            self.quality_grid.addWidget(_, idx + 1, 2)
+
+        self.reset_quality_check()
+
+    def reset_quality_check(self):
+        self.quality_check.setEnabled(False)
+        self.quality_check.setVisible(True)
+
+        for idx, _ in enumerate(self.quality_grid_labels):
+            _.setVisible(False)
+
+        for idx, _ in enumerate(self.quality_grid_values):
+            _.setVisible(False)
+            _.setText("")
+    
+    # def on_roi_edit_finished(self):
+    #     from icecream import ic # TODO:delete
+    #     text = self.roi_edit.text().split(",")
+    #     y_min, x_min, y_max, x_max = [int(_) for _ in text]
+    #     # update roi
+    #     self.window.view.roi = [[y_min, x_min], [y_max, x_max]]
+    #     # draw rectangle TODO use self.window.view.rubberband
+    #     self.window.view.rubberband.setGeometry(
+    #         QtCore.QRect(x_min, y_min, x_max-x_min, y_max-y_min)
+    #     )
+    #     self.window.view.rubberband.show()
+    #     #TOOD: incorrect indeces, (wrong place for the box,)
+    #     #TODO: box dispaperast afte rcllicking on View
+    #     #TODO: use map to scene??, idk
+    #     self.window.draw_frame()
+
     def on_fit_method_changed(self, state):
         if self.fit_method.currentText() == "LQ, Gaussian":
             self.gpufit_checkbox.setDisabled(False)
@@ -575,12 +803,49 @@ class ParametersDialog(QtWidgets.QDialog):
         )
         if path:
             with open(path, "r") as f:
-                self.z_calibration = yaml.load(f)
+                self.z_calibration = yaml.full_load(f)
                 self.z_calibration_path = path
             self.z_calib_label.setAlignment(QtCore.Qt.AlignRight)
             self.z_calib_label.setText(os.path.basename(path))
             self.fit_z_checkbox.setEnabled(True)
             self.fit_z_checkbox.setChecked(True)
+
+    def quality_progress(self, msg, index, result):
+        if msg != "":
+            self.window.status_bar.showMessage(msg)
+        else:
+            self.quality_grid_values[index].setText(result)
+
+    def quality_progress_finished(self, msg):
+        self.window.status_bar.showMessage(msg)
+
+    def check_quality(self):
+        print("Assesing Quality of Sample")
+        self.quality_check.setVisible(False)
+        for idx, _ in enumerate(self.quality_grid_labels):
+            _.setVisible(True)
+        for idx, _ in enumerate(self.quality_grid_values):
+            _.setVisible(True)
+
+        self.q_worker = QualityWorker(
+            self.window.locs, self.window.info, self.window.movie_path, self.pixelsize
+        )
+        self.q_worker.progressMade.connect(self.quality_progress)
+        self.q_worker.finished.connect(self.quality_progress_finished)
+        self.q_worker.start()
+
+    def load_astig_calib(self):
+        path, exe = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Load astigmatism calibration", directory=None, filter="*.pkl"
+        )
+        if path:
+            with open(path, "r") as f:
+                # self.astig_calibration = yaml.load(f)
+                self.astig_calibration_path = path
+            self.astig_label.setAlignment(QtCore.Qt.AlignRight)
+            self.astig_label.setText(os.path.basename(path))
+            self.calib_astig_checkbox.setEnabled(True)
+            self.calib_astig_checkbox.setChecked(True)
 
     def on_box_changed(self, value):
         self.window.on_parameters_changed()
@@ -642,9 +907,7 @@ class ParametersDialog(QtWidgets.QDialog):
 
     def set_camera_parameters(self, info):
         if "Cameras" in CONFIG and "Camera" in info:
-            cameras = [
-                self.camera.itemText(_) for _ in range(self.camera.count())
-            ]
+            cameras = [self.camera.itemText(_) for _ in range(self.camera.count())]
             camera = info["Camera"]
             if camera in cameras:
                 index = cameras.index(camera)
@@ -656,9 +919,9 @@ class ParametersDialog(QtWidgets.QDialog):
                         gain_property_name = cam_config["Gain Property Name"]
                         gain = mm_info[camera + "-" + gain_property_name]
                         if "EM Switch Property" in cam_config:
-                            switch_property_name = cam_config[
-                                "EM Switch Property"
-                            ]["Name"]
+                            switch_property_name = cam_config["EM Switch Property"][
+                                "Name"
+                            ]
                             switch_property_value = mm_info[
                                 camera + "-" + switch_property_name
                             ]
@@ -678,17 +941,12 @@ class ParametersDialog(QtWidgets.QDialog):
                                 exp_setting = mm_info[camera + "-" + category]
                                 cam_combo = cam_combos[i]
                                 for index in range(cam_combo.count()):
-                                    if (
-                                        cam_combo.itemText(index)
-                                        == exp_setting
-                                    ):
+                                    if cam_combo.itemText(index) == exp_setting:
                                         cam_combo.setCurrentIndex(index)
                                         break
                     if "Quantum Efficiency" in cam_config:
                         if "Channel Device" in cam_config:
-                            channel_device_name = cam_config["Channel Device"][
-                                "Name"
-                            ]
+                            channel_device_name = cam_config["Channel Device"]["Name"]
                             channel = mm_info[channel_device_name]
                             channels = cam_config["Channel Device"][
                                 "Emission Wavelengths"
@@ -774,12 +1032,13 @@ class ContrastDialog(QtWidgets.QDialog):
 
 
 class Window(QtWidgets.QMainWindow):
-    """ The main window """
+    """The main window"""
 
     def __init__(self):
         super().__init__()
         # Init GUI
         self.setWindowTitle("Picasso: Localize")
+
         this_directory = os.path.dirname(os.path.realpath(__file__))
         icon_path = os.path.join(this_directory, "icons", "localize.ico")
         icon = QtGui.QIcon(icon_path)
@@ -843,9 +1102,7 @@ class Window(QtWidgets.QMainWindow):
             settings["Localize"][
                 "box_size"
             ] = self.parameters_dialog.box_spinbox.value()
-            settings["Localize"][
-                "gradient"
-            ] = self.parameters_dialog.mng_slider.value()
+            settings["Localize"]["gradient"] = self.parameters_dialog.mng_slider.value()
         io.save_user_settings(settings)
         QtWidgets.qApp.closeAllWindows()
 
@@ -858,9 +1115,7 @@ class Window(QtWidgets.QMainWindow):
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self.open_file_dialog)
         file_menu.addAction(open_action)
-        load_picks_action = file_menu.addAction(
-            "Load picks as identifications"
-        )
+        load_picks_action = file_menu.addAction("Load picks as identifications")
         load_picks_action.triggered.connect(self.open_picks)
         load_locs_action = file_menu.addAction("Load locs as identifications")
         load_locs_action.triggered.connect(self.open_locs)
@@ -943,8 +1198,11 @@ class Window(QtWidgets.QMainWindow):
         localize_action.setShortcut("Ctrl+L")
         localize_action.triggered.connect(self.localize)
         analyze_menu.addAction(localize_action)
-        analyze_menu.addSeparator()
-        calibrate_z_action = analyze_menu.addAction("Calibrate 3D")
+
+        """ 3D """
+        threed_menu = menu_bar.addMenu("3D")
+
+        calibrate_z_action = threed_menu.addAction("Calibrate 3D")
         calibrate_z_action.triggered.connect(self.calibrate_z)
 
     @property
@@ -966,7 +1224,16 @@ class Window(QtWidgets.QMainWindow):
             dir = self.pwd
 
         path, exe = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Open image sequence", directory=dir, filter="All supported formats (*.raw *.tif *.tiff);;Raw files (*.raw);;Tiff iimages (*.tif *.tiff)"
+            self, 
+            "Open image sequence", 
+            directory=dir, 
+            filter=(
+                "All supported formats (*.raw *.tif *.tiff *.nd2)"
+                ";;Raw files (*.raw)"
+                ";;Tiff images (*.tif *.tiff)"
+                ";;ImaRIS IMS (*.ims)"
+                ";;Nd2 files (*.nd2);;"
+            )
         )
         if path:
             self.pwd = path
@@ -974,7 +1241,14 @@ class Window(QtWidgets.QMainWindow):
 
     def open(self, path):
         t0 = time.time()
-        result = io.load_movie(path, prompt_info=self.prompt_info)
+
+        if path.endswith(".ims"):
+            prompt_info = self.prompt_channel
+        else:
+            prompt_info = self.prompt_info
+
+        result = io.load_movie(path, prompt_info=prompt_info)
+
         if result is not None:
             self.movie, self.info = result
             dt = time.time() - t0
@@ -985,9 +1259,17 @@ class Window(QtWidgets.QMainWindow):
             self.set_frame(0)
             self.fit_in_view()
             self.parameters_dialog.set_camera_parameters(self.info[0])
-            self.status_bar.showMessage(
-                "Opened movie in {:.2f} seconds.".format(dt)
-            )
+            self.status_bar.showMessage("Opened movie in {:.2f} seconds.".format(dt))
+
+            if "Pixelsize" in self.info[0]:
+                self.parameters_dialog.pixelsize.setValue(
+                    int(self.info[0]["Pixelsize"])
+                )
+
+        self.setWindowTitle(
+            "Picasso: Localize. File: {}".format(os.path.basename(path))
+        )
+        self.parameters_dialog.reset_quality_check()
 
     def open_picks(self):
         if self.movie_path != []:
@@ -1003,7 +1285,7 @@ class Window(QtWidgets.QMainWindow):
     def load_picks(self, path):
         try:
             with open(path, "r") as f:
-                regions = yaml.load(f)
+                regions = yaml.full_load(f)
             self._picks = regions["Centers"]
             maxframes = int(self.info[0]["Frames"])
             # ask for drift correction
@@ -1017,7 +1299,6 @@ class Window(QtWidgets.QMainWindow):
                 drift = np.genfromtxt(driftpath)
             data = []
             n_id = 0
-
 
             for element in self._picks:
                 # drifted:
@@ -1056,7 +1337,12 @@ class Window(QtWidgets.QMainWindow):
             m_size = self.movie.shape
             r = int(box / 2)
 
-            self.identifications = self.identifications[(self.identifications.y-r>0) & (self.identifications.x-r>0) & (self.identifications.x+r<m_size[0]) & (self.identifications.y+r<m_size[1])]
+            self.identifications = self.identifications[
+                (self.identifications.y - r > 0)
+                & (self.identifications.x - r > 0)
+                & (self.identifications.x + r < m_size[0])
+                & (self.identifications.y + r < m_size[1])
+            ]
 
             self.locs = None
 
@@ -1110,26 +1396,14 @@ class Window(QtWidgets.QMainWindow):
             n_id = 0
             for element in locs:
                 currframe = element["frame"]
-                if currframe > n_frames and currframe < (
-                    max_frames - n_frames
-                ):
-                    xloc = (
-                        np.ones((2 * n_frames + 1,), dtype=np.float)
-                        * element["x"]
-                    )
-                    yloc = (
-                        np.ones((2 * n_frames + 1,), dtype=np.float)
-                        * element["y"]
-                    )
-                    frames = np.arange(
-                        currframe - n_frames, currframe + n_frames + 1
-                    )
+                if currframe > n_frames and currframe < (max_frames - n_frames):
+                    xloc = np.ones((2 * n_frames + 1,), dtype=np.float) * element["x"]
+                    yloc = np.ones((2 * n_frames + 1,), dtype=np.float) * element["y"]
+                    frames = np.arange(currframe - n_frames, currframe + n_frames + 1)
                     gradient = np.ones(2 * n_frames + 1) + 100
                     n_id_all = np.ones(2 * n_frames + 1) + n_id
                     temp = np.array([frames, xloc, yloc, gradient, n_id_all])
-                    data.append(
-                        [tuple(temp[:, j]) for j in range(temp.shape[1])]
-                    )
+                    data.append([tuple(temp[:, j]) for j in range(temp.shape[1])])
                 n_id += 1
 
             data = [item for sublist in data for item in sublist]
@@ -1151,7 +1425,12 @@ class Window(QtWidgets.QMainWindow):
             m_size = self.movie.shape
             r = int(box / 2)
 
-            self.identifications = self.identifications[(self.identifications.y-r>0) & (self.identifications.x-r>0) & (self.identifications.x+r<m_size[0]) & (self.identifications.y+r<m_size[1])]
+            self.identifications = self.identifications[
+                (self.identifications.y - r > 0)
+                & (self.identifications.x - r > 0)
+                & (self.identifications.x + r < m_size[0])
+                & (self.identifications.y + r < m_size[1])
+            ]
 
             self.locs = None
 
@@ -1169,8 +1448,6 @@ class Window(QtWidgets.QMainWindow):
                 )
             )
 
-
-
         except io.NoMetadataFileError:
             return
 
@@ -1178,6 +1455,11 @@ class Window(QtWidgets.QMainWindow):
         info, save, ok = PromptInfoDialog.getMovieSpecs(self)
         if ok:
             return info, save
+
+    def prompt_channel(self, channels):
+        channel, ok = PromptChannelDialog.getMovieSpecs(self, channels)
+        if ok:
+            return channel
 
     def previous_frame(self):
         if self.movie is not None:
@@ -1274,9 +1556,7 @@ class Window(QtWidgets.QMainWindow):
                 else:
                     self.status_bar.showMessage("")
             if self.locs is not None:
-                locs_frame = self.locs[
-                    self.locs.frame == self.curr_frame_number
-                ]
+                locs_frame = self.locs[self.locs.frame == self.curr_frame_number]
                 for loc in locs_frame:
                     self.scene.addItem(FitMarker(loc.x + 0.5, loc.y + 0.5, 1))
 
@@ -1301,14 +1581,10 @@ class Window(QtWidgets.QMainWindow):
 
     def load_parameters(self, path):
         with open(path, "r") as file:
-            parameters = yaml.load(file)
+            parameters = yaml.full_load(file)
             self.parameters_dialog.box_spinbox.setValue(parameters["Box Size"])
-            self.parameters_dialog.mng_spinbox.setValue(
-                parameters["Min. Net Gradient"]
-            )
-            self.status_bar.showMessage(
-                "Parameter file {} loaded.".format(path)
-            )
+            self.parameters_dialog.mng_spinbox.setValue(parameters["Min. Net Gradient"])
+            self.status_bar.showMessage("Parameter file {} loaded.".format(path))
 
     def save_parameters(self):
         path, exe = QtWidgets.QFileDialog.getSaveFileName(
@@ -1336,12 +1612,8 @@ class Window(QtWidgets.QMainWindow):
             self.identificaton_worker = IdentificationWorker(
                 self, fit_afterwards, calibrate_z
             )
-            self.identificaton_worker.progressMade.connect(
-                self.on_identify_progress
-            )
-            self.identificaton_worker.finished.connect(
-                self.on_identify_finished
-            )
+            self.identificaton_worker.progressMade.connect(self.on_identify_progress)
+            self.identificaton_worker.finished.connect(self.on_identify_finished)
             self.identificaton_worker.start()
 
     def on_identify_progress(self, frame_number, parameters):
@@ -1425,9 +1697,7 @@ class Window(QtWidgets.QMainWindow):
 
     def on_fit_finished(self, locs, elapsed_time, fit_z, calibrate_z):
         self.status_bar.showMessage(
-            "Fitted {:,} spots in {:.2f} seconds.".format(
-                len(locs), elapsed_time
-            )
+            "Fitted {:,} spots in {:.2f} seconds.".format(len(locs), elapsed_time)
         )
         self.locs = locs
         self.draw_frame()
@@ -1460,7 +1730,6 @@ class Window(QtWidgets.QMainWindow):
             else:
                 self.save_locs_after_fit()
 
-
     def on_fit_z_progress(self, curr, total):
         message = "Fitting z coordinate {:,} / {:,} ...".format(curr, total)
         self.status_bar.showMessage(message)
@@ -1478,11 +1747,10 @@ class Window(QtWidgets.QMainWindow):
         base, ext = os.path.splitext(self.movie_path)
         self.save_locs(base + "_locs.hdf5")
 
-        if self.parameters_dialog.database_checkbox:
+        if not self.parameters_dialog.quality_check.isEnabled():
+            self.parameters_dialog.quality_check.setEnabled(True)
 
-            self.status_bar.showMessage('Adding to database.')
-            localize.add_file_to_db(self.movie_path)
-            self.status_bar.showMessage('Done.')
+        self.parameters_dialog.gpufit_checkbox.setDisabled(False)
 
     def fit_in_view(self):
         self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
@@ -1516,14 +1784,17 @@ class Window(QtWidgets.QMainWindow):
         localize_info = self.last_identification_info.copy()
         localize_info["Generated by"] = "Picasso Localize"
         localize_info["Pixelsize"] = self.parameters_dialog.pixelsize.value()
+        localize_info["Fit method"] = self.parameters_dialog.fit_method.currentText()
         if self.parameters_dialog.fit_z_checkbox.isChecked():
             localize_info[
                 "Z Calibration Path"
             ] = self.parameters_dialog.z_calibration_path
-            localize_info[
-                "Z Calibration"
-            ] = self.parameters_dialog.z_calibration
+            localize_info["Z Calibration"] = self.parameters_dialog.z_calibration
         info = self.info + [localize_info]
+
+        if self.parameters_dialog.calib_astig_checkbox.isChecked():
+            print("Correcting astigmatism...")
+
         io.save_locs(path, self.locs, info)
 
     def save_locs_dialog(self):
@@ -1539,11 +1810,12 @@ class Window(QtWidgets.QMainWindow):
                 self.save_locs(path)
 
     def localize(self, calibrate_z=False):
+        self.parameters_dialog.gpufit_checkbox.setDisabled(True)
         if self.identifications is not None and calibrate_z is True:
             self.fit(calibrate_z=calibrate_z)
         else:
             self.identify(fit_afterwards=True, calibrate_z=calibrate_z)
-
+            
 
 class IdentificationWorker(QtCore.QThread):
 
@@ -1635,9 +1907,7 @@ class FitWorker(QtCore.QThread):
                     time.sleep(0.2)
                 theta = gausslq.fits_from_futures(fs)
                 em = self.camera_info["gain"] > 1
-                locs = gausslq.locs_from_fits(
-                    self.identifications, theta, self.box, em
-                )
+                locs = gausslq.locs_from_fits(self.identifications, theta, self.box, em)
         elif self.method == "mle":
             curr, thetas, CRLBs, llhoods, iterations = gaussmle.gaussmle_async(
                 spots, self.eps, self.max_it, method="sigmaxy"
@@ -1659,15 +1929,11 @@ class FitWorker(QtCore.QThread):
             fs = avgroi.fit_spots_parallel(spots, asynch=True)
             n_tasks = len(fs)
             while lib.n_futures_done(fs) < n_tasks:
-                self.progressMade.emit(
-                    round(N * lib.n_futures_done(fs) / n_tasks), N
-                )
+                self.progressMade.emit(round(N * lib.n_futures_done(fs) / n_tasks), N)
                 time.sleep(0.2)
             theta = avgroi.fits_from_futures(fs)
             em = self.camera_info["gain"] > 1
-            locs = avgroi.locs_from_fits(
-                self.identifications, theta, self.box, em
-            )
+            locs = avgroi.locs_from_fits(self.identifications, theta, self.box, em)
         else:
             print("This should never happen...")
         self.progressMade.emit(N + 1, N)
@@ -1680,7 +1946,13 @@ class FitZWorker(QtCore.QThread):
     progressMade = QtCore.pyqtSignal(int, int)
     finished = QtCore.pyqtSignal(np.recarray, float)
 
-    def __init__(self, locs, info, calibration, magnification_factor):
+    def __init__(
+        self, 
+        locs, 
+        info, 
+        calibration, 
+        magnification_factor,
+    ):
         super().__init__()
         self.locs = locs
         self.info = info
@@ -1700,30 +1972,99 @@ class FitZWorker(QtCore.QThread):
         )
         n_tasks = len(fs)
         while lib.n_futures_done(fs) < n_tasks:
-            self.progressMade.emit(
-                round(N * lib.n_futures_done(fs) / n_tasks), N
-            )
+            self.progressMade.emit(round(N * lib.n_futures_done(fs) / n_tasks), N)
             time.sleep(0.2)
         locs = zfit.locs_from_futures(fs, filter=0)
         dt = time.time() - t0
         self.finished.emit(locs, dt)
 
 
+class QualityWorker(QtCore.QThread):
+
+    progressMade = QtCore.pyqtSignal(str, int, str)
+    finished = QtCore.pyqtSignal(str)
+
+    def __init__(self, locs, info, path, pixelsize):
+        super().__init__()
+        self.locs = locs
+        self.info = info
+        self.path = path
+        self.pixelsize = pixelsize
+
+    def run(self):
+        # Sanity of locs.
+        sane_locs = lib.ensure_sanity(self.locs, self.info)
+
+        # Locs
+        self.progressMade.emit("Checking Quality (1/4) Locs ..", 0, "")
+        locs_per_frame = len(sane_locs) / self.info[0]["Frames"]
+        self.progressMade.emit("", 0, f"{locs_per_frame:.1f}")
+
+        # NeNA
+        self.progressMade.emit("Checking Quality (2/4) NeNA ..", 0, "")
+
+        def nena_callback(x):
+            self.progressMade.emit(f"Checking Quality (2/4) NeNA: {x} %", 0, "")
+
+        nena_px = localize.check_nena(sane_locs, self.info, nena_callback)
+        nena_nm = float(self.pixelsize.value() * nena_px)
+        self.progressMade.emit("", 1, f"{nena_px:.2f} px / {nena_nm:.2f} nm")
+
+        # Drift
+        self.progressMade.emit("Checking Quality (3/4) Drift ..", 0, "")
+
+        def drift_callback(x):
+            self.progressMade.emit(f"Checking Quality (3/4) Drift {x} %", 0, "")
+
+        drift_x, drift_y = localize.check_drift(
+            sane_locs, self.info, callback=drift_callback
+        )
+        self.progressMade.emit("", 2, f"X: {drift_x:.3f} px / Y: {drift_y:.3f} px")
+
+        # Kinetics
+        self.progressMade.emit("Checking Quality (4/4) Kinetics ..", 0, "")
+        len_mean = localize.check_kinetics(sane_locs, self.info)
+        self.progressMade.emit("", 3, f"{len_mean:.3f}")
+
+        print(f"Quality {nena_px} {drift_x} {drift_y} {len_mean}")
+
+        localize.add_file_to_db(
+            self.path, None, drift=(drift_x, drift_y), len_mean=len_mean, nena=nena_px
+        )
+
+        self.finished.emit("Quality parameters complete.")
+
+
 def main():
     app = QtWidgets.QApplication(sys.argv)
     window = Window()
+
+    from . import plugins
+
+    def iter_namespace(pkg):
+        return pkgutil.iter_modules(pkg.__path__, pkg.__name__ + ".")
+
+    plugins = [
+        importlib.import_module(name)
+        for finder, name, ispkg
+        in iter_namespace(plugins)
+    ]
+
+    for plugin in plugins:
+        p = plugin.Plugin(window)
+        if p.name == "localize":
+            p.execute()
+
     window.show()
 
     def excepthook(type, value, tback):
         lib.cancel_dialogs()
         message = "".join(traceback.format_exception(type, value, tback))
-        errorbox = QtWidgets.QMessageBox.critical(
-            window, "An error occured", message
-        )
+        errorbox = QtWidgets.QMessageBox.critical(window, "An error occured", message)
         errorbox.exec_()
         sys.__excepthook__(type, value, tback)
 
-    sys.excepthook = excepthook# #excepthook
+    sys.excepthook = excepthook  # #excepthook
 
     sys.exit(app.exec_())
 

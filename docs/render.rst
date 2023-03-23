@@ -26,7 +26,7 @@ Redundant cross-correlation drift correction
 Marker-based drift correction
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. In ``Picasso: Render``, pick drift markers as described in ``Picking of regions of interest``. Use the ``Pick similar`` option to automatically detect a large number of drift markers similar to a few manually selected ones.
+1. In ``Picasso: Render``, pick drift markers as described in **Picking of regions of interest**. Use the ``Pick similar`` option to automatically detect a large number of drift markers similar to a few manually selected ones.
 2. If the structures used as drift markers have an intrinsic size larger than the precision of individual localizations (e.g., DNA origami, large protein complexes), it is critical to select a large number of structures. Otherwise, the statistic for calculating the drift in each frame (the mean displacement of localization to the structure's center of mass) is not valid.
 3. Select ``Postprocess > Undrift from picked`` to compute and apply the drift correction.
 4. (Optional) Save the drift-corrected localizations by selecting ``File > Save localizations``.
@@ -43,6 +43,32 @@ Picking of regions of interest
 7. (Optional) Statistics about each pick region can be saved by selecting ``File > Save pick properties``. The resulting HDF5 file is not a localization file. Instead, it holds a data set called ``groups`` in which the rows show statistical values for each pick region.
 8. (Optional) The picked positions and diameter itself can be saved by selecting ``File > Save pick regions``. Such saved pick information can also be loaded into ``Picasso: Render`` by selecting ``File > Load pick regions``.
 
+3D rotation window
+------------------
+
+The 3D rotation window allows the user to render 3D localization data. To use it, select a single pick region (``Tools > Pick``) and click ``View > Update rotation window``. Some of the display settings (colors, blur method, etc.) are automatically uploaded to the rotation window. 
+
+The user may perform multiple actions in the rotation window, including: saving rotated localizations, building animations (.mp4 format), rotating by a specified angle, etc.
+
+Rotation around z-axis is available by pressing Ctrl/Command. Rotation axis can be frozen by pressing x/y/z to freeze around the corresponding axes (to freeze around the z-axis, Ctrl/Command must be pressed as well).
+
+There are several things to keep in mind when using the rotation window. Firstly, using individual localization precision is very slow and is not recommended as a default blur method. Also, the size of the rotation window can be altered, however, if it becomes too large, rendering may start to lag.
+
+RESI
+----
+.. image:: ../docs/render_resi.png
+   :width: 374
+   :alt: UML Render RESI
+
+
+In Picasso 0.6.0, a new RESI (Resolution Enhancement by Sequential Imaging) dialog was introduced. It allows for a substantial resolution boost by sequential imaging of a single target with multiple labels with Exchange-PAINT (*to be published*).
+
+To use RESI, prepare your individual RESI channels (localization, undrifting, filtering and **alignment**). Load such localization lists into Picasso Render and open ``Postprocess > RESI``. The dialog shown above will appear. Each channel will be clustered using the SMLM clusterer (other clustering algorithms could be applied as well although only the SMLM clusterer is implemented for RESI in Picasso). Clustering parameters can be defined for each RESI channel individually, although it is possible to apply the same parameters to all channels by clicking ``Apply the same clustering parameters to all channels``, which will copy the clustering parameters from the first row and paste it to all other channels.
+
+Next, the user needs to specify whether or not to save clustered localizations or cluster centers from each of the RESI channels individually, and whether to apply basic frame analysis (to minimize the effect of sticking events). For the explanation of the parameters, see `SMLM clusterer <https://picassosr.readthedocs.io/en/latest/render.html#smlm-clusterer>`_.
+
+Upon clicking ``Perform RESI analysis``, each of the loaded channels is clustered, cluster centers are extracted and combined from all RESI channels to create the final RESI file.
+
 Dialogs
 -------
 
@@ -54,7 +80,7 @@ General
 ^^^^^^^
 Adjust the general display settings.
 
-Zooom
+Zoom
 +++++
 Set the magnification factor.
 
@@ -68,7 +94,7 @@ Click ``show minimap`` to display a minimap in the upper left corner to localize
 
 Contrast
 ^^^^^^^^
-Define the minimum and maximum density of the and select a colormap. Available colormaps are ['gray', hot', 'inferno', 'magma', 'plasma', 'viridis']. The selected colormap will be saved when closing render.
+Define the minimum and maximum density of the and select a colormap. Over 100 colormaps are available. The last option ``Custom`` requires the user to load their own ``.npy`` file containg a numpy array with a custom colormap. The selected colormap will be saved when closing render.
 
 Blur
 ^^^^
@@ -121,6 +147,10 @@ Open [Ctrl+O]
 ^^^^^^^^^^^^^
 Open an .hdf5 file to open in render.
 
+Open rotated localizations [Ctrl+Shift+O]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Opens localizations that were saved via the rotation window, see above.
+
 Save localizations [Ctrl+S]
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Save the localizations that are currently loaded in render to an hdf5 file.
@@ -142,6 +172,13 @@ Saves the positions of the picked regions (yellow circles) in a .yaml file. The 
 Load pick regions
 ^^^^^^^^^^^^^^^^^
 Resets the current picked regions and loads regions from a .yaml file that contains pick regions.
+
+Export ROI for Imaris
+^^^^^^^^^^^^^^^^^^^^^
+This function allows to export the current ROI for Imaris. Note that this is currently only implemented for Windows.
+Click on File / Export ROI for imaris and enter a filename for export. Picasso will export the current region of interest with the current oversampling settings. If multiple channels are loaded it will export the channels with the same colors as set in Picasso (Shortcut CTRL+F or View / Files to change.)
+Depending on the size of the ROI, the export will take a couple of seconds. Once exporting is finished, the file will be saved at the set location.
+The resulting file can be opened e.g. with ImarisViewer or Imaris. Note that the orientation is the same as in Picasso.
 
 Export localizations
 ^^^^^^^^^^^^^^^^^^^^
@@ -169,10 +206,6 @@ Export as .txt for FRC
 ++++++++++++++++++++++
 Export as .txt file to be used for the fourier ring correlation plugin in ImageJ.
 
-Export as .txt for IMARIS
-+++++++++++++++++++++++++
-Export as .txt file to be used for IMARIS import.
-
 Export as .xyz for Chimera
 ++++++++++++++++++++++++++
 Export as .txt file to be used for Chimera import.
@@ -180,6 +213,10 @@ Export as .txt file to be used for Chimera import.
 Export as .3d for ViSP
 ++++++++++++++++++++++
 Export as .3d file to be used ViSP.
+
+Remove all localizations
+^^^^^^^^^^^^^^^^^^^^^^^^
+Removes all .hdf5 files loaded, restarts the render window.
 
 View
 ~~~~
@@ -212,6 +249,10 @@ Slice (3D)
 ^^^^^^^^^^
 Opens the slicer dialog which allows for slicing through 3D datasets.
 
+Update rotation window (3D) [Ctrl+Shift+R]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Opens/updates rotation window, see above. Requires a single picked region of interest to be selected.
+
 Show info
 ^^^^^^^^^
 Shows info for the current dataset. See Info Dialog.
@@ -239,6 +280,14 @@ Define the settings of the tools, i.e., the radius of the pick and an option to 
 Pick similar (CTRL + Shift + P)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Automatically identifies picks that are similar to the current picks.
+
+Remove localizations in picks
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Remove localizations found in picked region(s) of interest. Can be applied to separate or all channels simultaneously.
+
+Move to pick
+^^^^^^^^^^^^
+Changes FoV to display a pick region specified by the user.
 
 Show trace (CTRL + R)
 ^^^^^^^^^^^^^^^^^^^^^
@@ -276,30 +325,17 @@ Subtract pick regions
 ^^^^^^^^^^^^^^^^^^^^^^
 Allows loading another pick regions file to subtract from the currently selected picks. Can be slow for a large number of picks.
 
-Show FRET traces
-^^^^^^^^^^^^^^^^
-Allows showing FRET traces for picks. This requires to have an acceptor and donor dataset loaded. Both channels should be aligned (i.e., via the ``Align channels (RCC or from picked)`` function). ``Show FRET traces`` will calculate a FRET intensity when two single-molecule events in one pick occur in the same frame and display a trace for these events. The intensity is calculated as I = I_A/(I_A+I_D). Here, I_A and I_D are the photon values of the localization minus the calculated background. Only FRET events > 0 and < 1 will be displayed. 
-
-Calculate FRET in picks
-^^^^^^^^^^^^^^^^^^^^^^^
-Allows calculating FRET for several picks. This requires to have an acceptor and donor dataset loaded. Both channels should be aligned (i.e., via the Align channels function). The FRET intensity is calculated when two single-molecule events in one pick occur in the same frame. The intensity is calculated as I = I_A/(I_A+I_D). Here, I_A and I_D are the photon values of the localization minus the calculated background. Only FRET events in a range of > 0 and < 1 are kept. 
-
-After calculation, a histogram of the FRET intensities is displayed. Additionally, all localizations with a valid FRET intensity are saved in an hdf5 file. The localizations have an additional column with the FRET intensities. This allows reloading the FRET-localizations in render. To color-code for FRET-intensity, use the render properties function and select FRET. Additionally, a txt document is saved containing a list of the FRET values as it was used to display the histogram.
-
-Note: In order to calculate meaningful FRET data, the selected picks should contain data in the donor and acceptor channel. To ensure this, a sample workflow could be as follows:
-- Align the channels via ``Align channels (RCC or from picked)``
-- Pick some regions in one channel (i.e., the donor channel)
-- Calculate the pick properties 
-- Adjust the ``Pick similar`` parameter accordingly and pick similar
-- Filter in the other channel (i.e., the acceptor channel) via ``Filter picks by locs`` to have at least a minimum number of localizations
-- Use the calculate FRET in picks function
-
 Cluster in pick (k-means)
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 Allows performing k-means clustering in picks. Users can specify the number of clusters and deselect individual clusters. Picks can be kept or removed. After looping through all picks an hdf5 file with the cluster information can be saved.
 
 Mask image
 ^^^^^^^^^^
+Opens a dialog that allows the user to specify a mask for filtering localizations within and outside it.
+
+Fast rendering
+^^^^^^^^^^^^^^
+Allows the user to display only a fraction of localizations to speed up rendering.
 
 Postprocess
 ~~~~~~~~~~~
@@ -323,6 +359,10 @@ Undo previous drift correction (only 2D part). Can be pressed again to redo.
 Show drift
 ^^^^^^^^^^
 After drift correction, a drift file is created. If the drift file is present, the drift can be displayed with this option.
+
+Apply drift from an external file
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Applies drift from a user-specified. txt file. Keep in mind that the .txt drift files after consecutive undrifting rounds produce cumulative drift. Therefore, if 3 rounds of undrifing were performed, only the last file specifies the drift calculated in the 3 steps.
 
 Remove group info
 ^^^^^^^^^^^^^^^^^
@@ -350,27 +390,40 @@ Combines all localizations in each pick to one.
 
 Apply expressions to localizations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+This tool allows you to apply expressions to localizations, for example:
 
-This tool allows you to apply expressions to localizations.
+- ``x +=1`` will shift all localization by one to the right
+- ``x +=1; y+=1`` will shift all localization by one to the right and one up.
+- ``flip x z`` will exchange the x-axis with y-axis if z localizations are present (side projection), similar for ``flip y z``.
+- ``spiral r n`` will plot each localization over the time of the movie in a spiral with radius r and n number of turns (e.g., to detect repetitive binding), ``uspiral`` to reverse.
 
-dbscan
+**NOTE:** using two variables in one statement is not supported (e.g. ``x = y``) To filter localizations use picasso filter.
+
+DBSCAN
 ^^^^^^
 Cluster localizations with the dbscan clustering algorithm.
 
-hdbscan
+HDBSCAN
 ^^^^^^^
 Cluster localizations with the hdbscan clustering algorithm.
 
-Examples
-++++++++
-- ``x +=1`` will shift all localization by one to the right
-- ``x +=1;y+=1`` will shift all localization by one to the right and one up.
+SMLM clusterer
+^^^^^^^^^^^^^^
+Cluster localizations with the custom algorithm designed for SMLM. In short, localizations with the maximum number of neighboring localizations within a user-defined radius are chosen as cluster centers, around which all localizations within the given radius belong to one cluster. If two or more local maxima are within the radius, the clusters are merged.
 
-Notes
-+++++
-Using two variables in one statement is not supported (e.g. ``x = y``) To filter localizations use picasso filter.
+SMLM clusterer requires three (or four if 3D data is processed) arguments:
 
-Additional commands
-+++++++++++++++++++
-``flip x z`` will exchange the x-axis with y-axis if z localizations are present (side projection), similar for ``flip y z``.
-``spiral r n`` will plot each localization over the time of the movie in a spiral with radius r and n number of turns (e.g., to detect repetitive binding), ``uspiral`` to reverse.
+- Radius: final size of the clusters.
+- Radius z (3D only): final size of the clusters in the z axis. If the value is different from radius in xy plane, clusters have ellipsoidal shape. Radius z can have a different value to account for a difference in localization precision in lateral and axial directions.
+- Min. locs: minimum number of localizations in a cluster.
+- Basic frame analysis: If True, each cluster is checked for its value of mean frame (if it is within the first or the last 20% of the total acquisition time, it is discarded). Moreover, localizations inside each cluster are split into 20 time bins (across the whole acquisition time). If a single time bin contains more than 80% of localizations per cluster, the cluster is discarded.
+
+**Note to all clustering algorithms:** it is highly recommended to remove any fiducial markers before clustering, to lower clustering time, given they are of no interest to the user. To do that, the markers can be picked and removed using ``Tools > Remove localizations in picks``.
+
+Test clusterer
+^^^^^^^^^^^^^^
+Opens a dialog where different clustering parameters can be checked on the loaded dataset. Requires a single pick region of interest to be selected.
+
+Nearest Neighbor Analysis
+^^^^^^^^^^^^^^^^^^^^^^^^^
+Calculates distances to the ``k``-th nearest neighbors between two channels (can be the same channel). ``k`` is defined by the user. The distances are stored in nm as a .csv file.

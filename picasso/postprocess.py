@@ -10,13 +10,14 @@
 
 import numpy as _np
 import numba as _numba
+import math as _math
 
 from sklearn.cluster import DBSCAN as _DBSCAN
 
 from scipy import interpolate as _interpolate
 from scipy.special import iv as _iv
 from scipy.spatial import distance
-from scipy.spatial import ConvexHull
+# from icecream import ic
 
 from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 import multiprocessing as _multiprocessing
@@ -27,10 +28,13 @@ from collections import OrderedDict as _OrderedDict
 from picasso.picasso import lib as _lib
 from picasso.picasso import render as _render
 from picasso.picasso import imageprocess as _imageprocess
+from picasso.picasso import clusterer as _clusterer
 from threading import Thread as _Thread
 import time as _time
 from tqdm import tqdm as _tqdm
+from tqdm import trange as _trange
 from numpy.lib.recfunctions import stack_arrays
+from sklearn.neighbors import NearestNeighbors as NN
 
 
 def get_index_blocks(locs, info, size, callback=None):
@@ -48,30 +52,17 @@ def get_index_blocks(locs, info, size, callback=None):
     block_ends = _np.zeros((n_blocks_y, n_blocks_x), dtype=_np.uint32)
     K, L = block_starts.shape
     # Fill in block starts and ends
-    # We are running this in a thread with a nogil numba function.
-    # This helps updating a potential GUI with the callback.
-    if callback is not None:
-        callback(0)
-        counter = [0]
-    else:
-        counter = None
     thread = _Thread(
         target=_fill_index_blocks,
-        args=(block_starts, block_ends, x_index, y_index, counter),
+        args=(block_starts, block_ends, x_index, y_index),
     )
     thread.start()
-    if callback is not None:
-        while counter[0] < K:
-            callback(counter[0])
-            _time.sleep(0.1)
     thread.join()
-    if callback is not None:
-        callback(counter[0])
     return locs, size, x_index, y_index, block_starts, block_ends, K, L
 
 
 def index_blocks_shape(info, size):
-    """ Returns the shape of the index grid, given the movie and grid sizes """
+    """Returns the shape of the index grid, given the movie and grid sizes"""
     n_blocks_x = int(_np.ceil(info[0]["Width"] / size))
     n_blocks_y = int(_np.ceil(info[0]["Height"] / size))
     return n_blocks_y, n_blocks_x
@@ -81,47 +72,46 @@ def index_blocks_shape(info, size):
 def n_block_locs_at(x, y, size, K, L, block_starts, block_ends):
     x_index = _np.uint32(x / size)
     y_index = _np.uint32(y / size)
-    n_block_locs = 0
+    step = 0
     for k in range(y_index - 1, y_index + 2):
         if 0 < k < K:
             for l in range(x_index - 1, x_index + 2):
                 if 0 < l < L:
-                    n_block_locs += block_ends[k, l] - block_starts[k, l]
+                    if step == 0:
+                        n_block_locs = _np.uint32(block_ends[k][l] - block_starts[k][l])
+                        step = 1
+                    else:
+                        n_block_locs += _np.uint32(block_ends[k][l] - block_starts[k][l])
     return n_block_locs
 
 
 def get_block_locs_at(x, y, index_blocks):
-    locs, size, x_index, y_index, block_starts, block_ends, K, L = index_blocks
-    x_index = _np.uint32(x / size)  # is this really necessary?
-    y_index = _np.uint32(y / size)  # is this really necessary?
+    locs, size, _, _, block_starts, block_ends, K, L = index_blocks
+    x_index = _np.uint32(x / size)
+    y_index = _np.uint32(y / size) 
     indices = []
     for k in range(y_index - 1, y_index + 2):
-        if 0 < k < K:
+        if 0 <= k < K:
             for l in range(x_index - 1, x_index + 2):
-                if 0 < l < L:
+                if 0 <= l < L:
                     indices.append(
                         list(range(block_starts[k, l], block_ends[k, l]))
                     )
     indices = list(_itertools.chain(*indices))
     return locs[indices]
 
-
+@_numba.jit(nopython=True, nogil=True)
 def _fill_index_blocks(
-    block_starts, block_ends, x_index, y_index, counter=None
+    block_starts, block_ends, x_index, y_index
 ):
     Y, X = block_starts.shape
     N = len(x_index)
     k = 0
-    if counter is not None:
-        counter[0] = 0
     for i in range(Y):
         for j in range(X):
             k = _fill_index_block(
                 block_starts, block_ends, N, x_index, y_index, i, j, k
             )
-        if counter is not None:
-            counter[0] = i + 1
-
 
 @_numba.jit(nopython=True, nogil=True)
 def _fill_index_block(block_starts, block_ends, N, x_index, y_index, i, j, k):
@@ -131,6 +121,127 @@ def _fill_index_block(block_starts, block_ends, N, x_index, y_index, i, j, k):
     block_ends[i, j] = k
     return k
 
+@_numba.jit(nopython=True, nogil=True, cache=True)
+def pick_similar(
+        x, y_shift, y_base,
+        min_n_locs, max_n_locs, min_rmsd, max_rmsd, 
+        x_r, y_r1, y_r2,
+        locs_xy, block_starts, block_ends, K, L,
+        x_similar, y_similar, r, d2,
+    ):
+    for i, x_grid in enumerate(x):
+        x_range = x_r[i]
+        # y_grid is shifted for odd columns
+        if i % 2:
+            y = y_shift
+            y_r = y_r1
+        else:
+            y = y_base
+            y_r = y_r2
+        for j, y_grid in enumerate(y):
+            y_range = y_r[j]
+            n_block_locs = _n_block_locs_at(
+                x_range, y_range, K, L, block_starts, block_ends
+            )
+            if n_block_locs >= min_n_locs:
+                block_locs_xy = _get_block_locs_at(
+                    x_range, y_range, 
+                    locs_xy, block_starts, block_ends, K, L,
+                )
+                picked_locs_xy = _locs_at(
+                    x_grid, y_grid, block_locs_xy, r
+                )
+                if picked_locs_xy.shape[1] > 1:
+                    # Move to COM peak
+                    x_test_old = x_grid
+                    y_test_old = y_grid
+                    x_test = _np.mean(picked_locs_xy[0])
+                    y_test = _np.mean(picked_locs_xy[1])
+                    count = 0
+                    while (
+                        _np.abs(x_test - x_test_old) > 1e-3
+                        or _np.abs(y_test - y_test_old) > 1e-3
+                    ):
+                        count += 1
+                        # skip the locs if the loop is too long
+                        if count > 500:
+                            break
+                        x_test_old = x_test
+                        y_test_old = y_test
+                        picked_locs_xy = _locs_at(
+                            x_test, y_test, block_locs_xy, r
+                        )
+                        x_test = _np.mean(picked_locs_xy[0])
+                        y_test = _np.mean(picked_locs_xy[1])
+                    if _np.all(
+                        (x_similar - x_test) ** 2
+                        + (y_similar - y_test) ** 2
+                        > d2
+                    ):
+                        if min_n_locs <= picked_locs_xy.shape[1] <= max_n_locs:
+                            if (
+                                min_rmsd
+                                <= _rmsd_at_com(picked_locs_xy)
+                                <= max_rmsd
+                            ):
+                                x_similar = _np.append(
+                                    x_similar, x_test
+                                )
+                                y_similar = _np.append(
+                                    y_similar, y_test
+                                )
+    return x_similar, y_similar
+
+@_numba.jit(nopython=True, nogil=True)
+def _n_block_locs_at(x_range, y_range, K, L, block_starts, block_ends, cache=True):
+    step = 0
+    for k in range(y_range - 1, y_range + 2):
+        if 0 < k < K:
+            for l in range(x_range - 1, x_range + 2):
+                if 0 < l < L:
+                    if step == 0:
+                        n_block_locs = _np.uint32(block_ends[k][l] - block_starts[k][l])
+                        step = 1
+                    else:
+                        n_block_locs += _np.uint32(block_ends[k][l] - block_starts[k][l])
+    return n_block_locs
+
+@_numba.jit(nopython=True, nogil=True, cache=True)
+def _get_block_locs_at(
+        x_range, y_range, locs_xy, 
+        block_starts, block_ends, K, L,
+    ):
+    step = 0
+    for k in range(y_range - 1, y_range + 2):
+        if 0 < k < K:
+            for l in range(x_range - 1, x_range + 2):
+                if 0 < l < L:
+                    if block_ends[k, l] - block_starts[k, l] > 0:
+                        # numba does not work if you attach arange to an empty list so the first step is different
+                        # this is because of dtype issues
+                        if step == 0:
+                            indices = _np.arange(float(block_starts[k, l]), float(block_ends[k, l]), 
+                                dtype=_np.uint32)
+                            step = 1
+                        else:
+                            indices = _np.concatenate((indices, 
+                                _np.arange(float(block_starts[k, l]), float(block_ends[k, l]), dtype=_np.uint32)
+                            ))
+    return locs_xy[:, indices]
+
+@_numba.jit(nopython=True, nogil=True, cache=True)
+def _locs_at(x, y, locs_xy, r):
+    dx = locs_xy[0] - x
+    dy = locs_xy[1] - y
+    r2 = r ** 2
+    is_picked = dx ** 2 + dy ** 2 < r2
+    return locs_xy[:, is_picked]
+
+@_numba.jit(nopython=True, nogil=True)
+def _rmsd_at_com(locs_xy):
+    com_x = _np.mean(locs_xy[0])
+    com_y = _np.mean(locs_xy[1])
+    return _np.sqrt(_np.mean((locs_xy[0] - com_x) ** 2 + (locs_xy[1] - com_y) ** 2))
 
 @_numba.jit(nopython=True, nogil=True)
 def _distance_histogram(
@@ -148,7 +259,7 @@ def _distance_histogram(
     y = locs.y
     dh_len = _np.uint32(r_max / bin_size)
     dh = _np.zeros(dh_len, dtype=_np.uint32)
-    r_max_2 = r_max ** 2
+    r_max_2 = r_max**2
     K, L = block_starts.shape
     end = min(start + chunk, len(locs))
     for i in range(start, end):
@@ -179,7 +290,9 @@ def distance_histogram(locs, info, bin_size, r_max):
         locs, info, r_max
     )
     N = len(locs)
-    n_threads = _multiprocessing.cpu_count()
+    n_threads = min(
+        60, max(1, int(0.75 * _multiprocessing.cpu_count()))
+    ) # Python crashes when using >64 cores
     chunk = int(N / n_threads)
     starts = range(0, N, chunk)
     args = [
@@ -206,11 +319,11 @@ def nena(locs, info, callback=None):
     bin_centers, dnfl_ = next_frame_neighbor_distance_histogram(locs, callback)
 
     def func(d, a, s, ac, dc, sc):
-        f = a * (d / s ** 2) * _np.exp(-0.5 * d ** 2 / s ** 2)
+        f = a * (d / s**2) * _np.exp(-0.5 * d**2 / s**2)
         fc = (
             ac
-            * (d / sc ** 2)
-            * _np.exp(-0.5 * (d ** 2 + dc ** 2) / sc ** 2)
+            * (d / sc**2)
+            * _np.exp(-0.5 * (d**2 + dc**2) / sc**2)
             * _iv(0, d * dc / sc)
         )
         return f + fc
@@ -271,7 +384,7 @@ def _fill_dnfl(N, frame, x, y, group, i, d_max, dnfl, bin_size):
     for max_index in range(min_index, N):
         if frame[max_index] > max_frame:
             break
-    d_max_2 = d_max ** 2
+    d_max_2 = d_max**2
     for j in range(min_index, max_index):
         if group[j] == group_i:
             dx2 = (x_i - x[j]) ** 2
@@ -294,314 +407,6 @@ def pair_correlation(locs, info, bin_size, r_max):
     area = _np.pi * bin_size * (2 * bins_lower + bin_size)
     return bins_lower, dh / area
 
-
-def dbscan(locs, radius, min_density):
-    from sklearn.cluster import DBSCAN as _DBSCAN
-
-    print("Identifying clusters...")
-    if hasattr(locs, "z"):
-        print("z-coordinates detected")
-        pixelsize = int(input("Enter the pixelsize in nm/px:"))
-        locs = locs[
-            _np.isfinite(locs.x) & _np.isfinite(locs.y) & _np.isfinite(locs.z)
-        ]
-        X = _np.vstack((locs.x, locs.y, locs.z / pixelsize)).T
-        db = _DBSCAN(eps=radius, min_samples=min_density).fit(X)
-        group = _np.int32(db.labels_)  # int32 for Origin compatiblity
-        locs = _lib.append_to_rec(locs, group, "group")
-        locs = locs[locs.group != -1]
-        print("Generating cluster information...")
-        groups = _np.unique(locs.group)
-        n_groups = len(groups)
-        mean_frame = _np.zeros(n_groups)
-        std_frame = _np.zeros(n_groups)
-        com_x = _np.zeros(n_groups)
-        com_y = _np.zeros(n_groups)
-        com_z = _np.zeros(n_groups)
-        std_x = _np.zeros(n_groups)
-        std_y = _np.zeros(n_groups)
-        std_z = _np.zeros(n_groups)
-        convex_hull = _np.zeros(n_groups)
-        volume = _np.zeros(n_groups)
-        n = _np.zeros(n_groups, dtype=_np.int32)
-        for i, group in enumerate(groups):
-            group_locs = locs[locs.group == i]
-            mean_frame[i] = _np.mean(group_locs.frame)
-            com_x[i] = _np.mean(group_locs.x)
-            com_y[i] = _np.mean(group_locs.y)
-            com_z[i] = _np.mean(group_locs.z)
-            std_frame[i] = _np.std(group_locs.frame)
-            std_x[i] = _np.std(group_locs.x)
-            std_y[i] = _np.std(group_locs.y)
-            std_z[i] = _np.std(group_locs.z)
-            n[i] = len(group_locs)
-            X_group = _np.stack(
-                [group_locs.x, group_locs.y, group_locs.z / pixelsize], axis=0
-            ).T
-            volume[i] = (
-                _np.power(
-                    (std_x[i] + std_y[i] + (std_z[i] / pixelsize)) / 3 * 2, 3
-                )
-                * _np.pi
-                * 4
-                / 3
-            )
-            try:
-                hull = ConvexHull(X_group)
-                convex_hull[i] = hull.volume
-            except Exception as e:
-                print(e)
-                convex_hull[i] = 0
-        clusters = _np.rec.array(
-            (
-                groups,
-                convex_hull,
-                volume,
-                mean_frame,
-                com_x,
-                com_y,
-                com_z,
-                std_frame,
-                std_x,
-                std_y,
-                std_z,
-                n,
-            ),
-            dtype=[
-                ("groups", groups.dtype),
-                ("convex_hull", "f4"),
-                ("volume", "f4"),
-                ("mean_frame", "f4"),
-                ("com_x", "f4"),
-                ("com_y", "f4"),
-                ("com_z", "f4"),
-                ("std_frame", "f4"),
-                ("std_x", "f4"),
-                ("std_y", "f4"),
-                ("std_z", "f4"),
-                ("n", "i4"),
-            ],
-        )
-    else:
-        locs = locs[_np.isfinite(locs.x) & _np.isfinite(locs.y)]
-        X = _np.vstack((locs.x, locs.y)).T
-        db = _DBSCAN(eps=radius, min_samples=min_density).fit(X)
-        group = _np.int32(db.labels_)  # int32 for Origin compatiblity
-        locs = _lib.append_to_rec(locs, group, "group")
-        locs = locs[locs.group != -1]
-        print("Generating cluster information...")
-        groups = _np.unique(locs.group)
-        n_groups = len(groups)
-        mean_frame = _np.zeros(n_groups)
-        std_frame = _np.zeros(n_groups)
-        com_x = _np.zeros(n_groups)
-        com_y = _np.zeros(n_groups)
-        std_x = _np.zeros(n_groups)
-        std_y = _np.zeros(n_groups)
-        convex_hull = _np.zeros(n_groups)
-        area = _np.zeros(n_groups)
-        n = _np.zeros(n_groups, dtype=_np.int32)
-        for i, group in enumerate(groups):
-            group_locs = locs[locs.group == i]
-            mean_frame[i] = _np.mean(group_locs.frame)
-            com_x[i] = _np.mean(group_locs.x)
-            com_y[i] = _np.mean(group_locs.y)
-            std_frame[i] = _np.std(group_locs.frame)
-            std_x[i] = _np.std(group_locs.x)
-            std_y[i] = _np.std(group_locs.y)
-            n[i] = len(group_locs)
-            X_group = _np.stack([group_locs.x, group_locs.y], axis=0).T
-            area[i] = _np.power((std_x[i] + std_y[i]), 2) * _np.pi
-            try:
-                hull = ConvexHull(X_group)
-                convex_hull[i] = hull.volume
-            except Exception as e:
-                print(e)
-                convex_hull[i] = 0
-        clusters = _np.rec.array(
-            (
-                groups,
-                convex_hull,
-                area,
-                mean_frame,
-                com_x,
-                com_y,
-                std_frame,
-                std_x,
-                std_y,
-                n,
-            ),
-            dtype=[
-                ("groups", groups.dtype),
-                ("convex_hull", "f4"),
-                ("area", "f4"),
-                ("mean_frame", "f4"),
-                ("com_x", "f4"),
-                ("com_y", "f4"),
-                ("std_frame", "f4"),
-                ("std_x", "f4"),
-                ("std_y", "f4"),
-                ("n", "i4"),
-            ],
-        )
-    return clusters, locs
-
-def hdbscan(locs, min_cluster_size, min_samples, cluster_selection_epsilon=0.5, cluster_selection_method='eom'):
-
-    from hdbscan import HDBSCAN as _HDBSCAN
-
-    print("Identifying clusters...")
-    if hasattr(locs, "z"):
-        print("z-coordinates detected")
-        pixelsize = int(input("Enter the pixelsize in nm/px:"))
-        locs = locs[
-            _np.isfinite(locs.x) & _np.isfinite(locs.y) & _np.isfinite(locs.z)
-        ]
-        X = _np.vstack((locs.x, locs.y, locs.z / pixelsize)).T
-        hdb = _HDBSCAN(
-            min_samples=min_samples, min_cluster_size=min_cluster_size, cluster_selection_epsilon=cluster_selection_epsilon, cluster_selection_method=cluster_selection_method
-        ).fit(X)
-        group = _np.int32(hdb.labels_)  # int32 for Origin compatiblity
-        locs = _lib.append_to_rec(locs, group, "group")
-        locs = locs[locs.group != -1]
-        print("Generating cluster information...")
-        groups = _np.unique(locs.group)
-        n_groups = len(groups)
-        mean_frame = _np.zeros(n_groups)
-        std_frame = _np.zeros(n_groups)
-        com_x = _np.zeros(n_groups)
-        com_y = _np.zeros(n_groups)
-        com_z = _np.zeros(n_groups)
-        std_x = _np.zeros(n_groups)
-        std_y = _np.zeros(n_groups)
-        std_z = _np.zeros(n_groups)
-        convex_hull = _np.zeros(n_groups)
-        volume = _np.zeros(n_groups)
-        n = _np.zeros(n_groups, dtype=_np.int32)
-        for i, group in enumerate(groups):
-            group_locs = locs[locs.group == i]
-            mean_frame[i] = _np.mean(group_locs.frame)
-            com_x[i] = _np.mean(group_locs.x)
-            com_y[i] = _np.mean(group_locs.y)
-            com_z[i] = _np.mean(group_locs.z)
-            std_frame[i] = _np.std(group_locs.frame)
-            std_x[i] = _np.std(group_locs.x)
-            std_y[i] = _np.std(group_locs.y)
-            std_z[i] = _np.std(group_locs.z)
-            n[i] = len(group_locs)
-            X_group = _np.stack(
-                [group_locs.x, group_locs.y, group_locs.z / pixelsize], axis=0
-            ).T
-            volume[i] = (
-                _np.power(
-                    (std_x[i] + std_y[i] + (std_z[i] / pixelsize)) / 3 * 2, 3
-                )
-                * _np.pi
-                * 4
-                / 3
-            )
-            try:
-                hull = ConvexHull(X_group)
-                convex_hull[i] = hull.volume
-            except Exception as e:
-                print(e)
-                convex_hull[i] = 0
-        clusters = _np.rec.array(
-            (
-                groups,
-                convex_hull,
-                volume,
-                mean_frame,
-                com_x,
-                com_y,
-                com_z,
-                std_frame,
-                std_x,
-                std_y,
-                std_z,
-                n,
-            ),
-            dtype=[
-                ("groups", groups.dtype),
-                ("convex_hull", "f4"),
-                ("volume", "f4"),
-                ("mean_frame", "f4"),
-                ("com_x", "f4"),
-                ("com_y", "f4"),
-                ("com_z", "f4"),
-                ("std_frame", "f4"),
-                ("std_x", "f4"),
-                ("std_y", "f4"),
-                ("std_z", "f4"),
-                ("n", "i4"),
-            ],
-        )
-    else:
-        locs = locs[_np.isfinite(locs.x) & _np.isfinite(locs.y)]
-        X = _np.vstack((locs.x, locs.y)).T
-        hdb = _HDBSCAN(
-            min_samples=min_samples, min_cluster_size=min_cluster_size
-        ).fit(X)
-        group = _np.int32(hdb.labels_)  # int32 for Origin compatiblity
-        locs = _lib.append_to_rec(locs, group, "group")
-        locs = locs[locs.group != -1]
-        print("Generating cluster information...")
-        groups = _np.unique(locs.group)
-        n_groups = len(groups)
-        mean_frame = _np.zeros(n_groups)
-        std_frame = _np.zeros(n_groups)
-        com_x = _np.zeros(n_groups)
-        com_y = _np.zeros(n_groups)
-        std_x = _np.zeros(n_groups)
-        std_y = _np.zeros(n_groups)
-        convex_hull = _np.zeros(n_groups)
-        area = _np.zeros(n_groups)
-        n = _np.zeros(n_groups, dtype=_np.int32)
-        for i, group in enumerate(groups):
-            group_locs = locs[locs.group == i]
-            mean_frame[i] = _np.mean(group_locs.frame)
-            com_x[i] = _np.mean(group_locs.x)
-            com_y[i] = _np.mean(group_locs.y)
-            std_frame[i] = _np.std(group_locs.frame)
-            std_x[i] = _np.std(group_locs.x)
-            std_y[i] = _np.std(group_locs.y)
-            n[i] = len(group_locs)
-            X_group = _np.stack([group_locs.x, group_locs.y], axis=0).T
-            area[i] = _np.power((std_x[i] + std_y[i]), 2) * _np.pi
-            try:
-                hull = ConvexHull(X_group)
-                convex_hull[i] = hull.volume
-            except Exception as e:
-                print(e)
-                convex_hull[i] = 0
-        clusters = _np.rec.array(
-            (
-                groups,
-                convex_hull,
-                area,
-                mean_frame,
-                com_x,
-                com_y,
-                std_frame,
-                std_x,
-                std_y,
-                n,
-            ),
-            dtype=[
-                ("groups", groups.dtype),
-                ("convex_hull", "f4"),
-                ("area", "f4"),
-                ("mean_frame", "f4"),
-                ("com_x", "f4"),
-                ("com_y", "f4"),
-                ("std_frame", "f4"),
-                ("std_x", "f4"),
-                ("std_y", "f4"),
-                ("n", "i4"),
-            ],
-        )
-    return clusters, locs
-
 @_numba.jit(nopython=True, nogil=True)
 def _local_density(
     locs, radius, x_index, y_index, block_starts, block_ends, start, chunk
@@ -609,7 +414,7 @@ def _local_density(
     x = locs.x
     y = locs.y
     N = len(x)
-    r2 = radius ** 2
+    r2 = radius**2
     end = min(start + chunk, N)
     density = _np.zeros(N, dtype=_np.uint32)
     for i in range(start, end):
@@ -633,13 +438,14 @@ def _local_density(
         density[i] = di
     return density
 
-
 def compute_local_density(locs, info, radius):
-    locs, x_index, y_index, block_starts, block_ends = get_index_blocks(
+    locs, x_index, y_index, block_starts, block_ends, K, L = get_index_blocks(
         locs, info, radius
     )
     N = len(locs)
-    n_threads = _multiprocessing.cpu_count()
+    n_threads = min(
+        60, max(1, int(0.75 * _multiprocessing.cpu_count()))
+    ) # Python crashes when using >64 cores
     chunk = int(N / n_threads)
     starts = range(0, N, chunk)
     args = [
@@ -663,6 +469,9 @@ def compute_local_density(locs, info, radius):
 
 
 def compute_dark_times(locs, group=None):
+
+    if "len" not in locs.dtype.names:
+        raise AttributeError("Length not found. Please link localizations first.")
     dark = dark_times(locs, group)
     locs = _lib.append_to_rec(locs, _np.int32(dark), "dark")
     locs = locs[locs.dark != -1]
@@ -752,7 +561,7 @@ def weighted_variance(locs):
         * (
             sum((w * x - wbarx * xWbarx) ** 2)
             - 2 * xWbarx * sum((w - wbarx) * (w * x - wbarx * xWbarx))
-            + xWbarx ** 2 * sum((w - wbarx) ** 2)
+            + xWbarx**2 * sum((w - wbarx) ** 2)
         )
     )
     variance_y = (
@@ -761,7 +570,7 @@ def weighted_variance(locs):
         * (
             sum((w * y - wbary * xWbary) ** 2)
             - 2 * xWbary * sum((w - wbary) * (w * y - wbary * xWbary))
-            + xWbary ** 2 * sum((w - wbary) ** 2)
+            + xWbary**2 * sum((w - wbary) ** 2)
         )
     )
     return variance_x, variance_y
@@ -790,25 +599,13 @@ def cluster_combine(locs):
             for i, clusterval in enumerate(cluster):
                 cluster_locs = temp[temp["cluster"] == clusterval]
                 mean_frame[i] = _np.mean(cluster_locs.frame)
-                com_x[i] = _np.average(
-                    cluster_locs.x, weights=cluster_locs.photons
-                )
-                com_y[i] = _np.average(
-                    cluster_locs.y, weights=cluster_locs.photons
-                )
-                com_z[i] = _np.average(
-                    cluster_locs.z, weights=cluster_locs.photons
-                )
+                com_x[i] = _np.average(cluster_locs.x, weights=cluster_locs.photons)
+                com_y[i] = _np.average(cluster_locs.y, weights=cluster_locs.photons)
+                com_z[i] = _np.average(cluster_locs.z, weights=cluster_locs.photons)
                 std_frame[i] = _np.std(cluster_locs.frame)
-                std_x[i] = _np.std(cluster_locs.x) / _np.sqrt(
-                    len(cluster_locs)
-                )
-                std_y[i] = _np.std(cluster_locs.y) / _np.sqrt(
-                    len(cluster_locs)
-                )
-                std_z[i] = _np.std(cluster_locs.z) / _np.sqrt(
-                    len(cluster_locs)
-                )
+                std_x[i] = _np.std(cluster_locs.x) / _np.sqrt(len(cluster_locs))
+                std_y[i] = _np.std(cluster_locs.y) / _np.sqrt(len(cluster_locs))
+                std_z[i] = _np.std(cluster_locs.z) / _np.sqrt(len(cluster_locs))
                 n[i] = len(cluster_locs)
                 group_id[i] = group
             clusters = _np.rec.array(
@@ -856,19 +653,11 @@ def cluster_combine(locs):
             for i, clusterval in enumerate(cluster):
                 cluster_locs = temp[temp["cluster"] == clusterval]
                 mean_frame[i] = _np.mean(cluster_locs.frame)
-                com_x[i] = _np.average(
-                    cluster_locs.x, weights=cluster_locs.photons
-                )
-                com_y[i] = _np.average(
-                    cluster_locs.y, weights=cluster_locs.photons
-                )
+                com_x[i] = _np.average(cluster_locs.x, weights=cluster_locs.photons)
+                com_y[i] = _np.average(cluster_locs.y, weights=cluster_locs.photons)
                 std_frame[i] = _np.std(cluster_locs.frame)
-                std_x[i] = _np.std(cluster_locs.x) / _np.sqrt(
-                    len(cluster_locs)
-                )
-                std_y[i] = _np.std(cluster_locs.y) / _np.sqrt(
-                    len(cluster_locs)
-                )
+                std_x[i] = _np.std(cluster_locs.x) / _np.sqrt(len(cluster_locs))
+                std_y[i] = _np.std(cluster_locs.y) / _np.sqrt(len(cluster_locs))
                 n[i] = len(cluster_locs)
                 group_id[i] = group
             clusters = _np.rec.array(
@@ -907,7 +696,6 @@ def cluster_combine_dist(locs):
 
     if hasattr(locs, "z"):
         print("XYZ")
-        pixelsize = int(input("Enter the pixelsize in nm/px:"))
 
         combined_locs = []
         for group in _tqdm(_np.unique(locs["group"])):
@@ -934,11 +722,11 @@ def cluster_combine_dist(locs):
                     [
                         cluster_locs.x,
                         cluster_locs.y,
-                        cluster_locs.z / pixelsize,
+                        cluster_locs.z,
                     ]
                 )
                 all_points = _np.array(
-                    [group_locs.x, group_locs.y, group_locs.z / pixelsize]
+                    [group_locs.x, group_locs.y, group_locs.z]
                 )
                 distances = distance.cdist(
                     ref_point.transpose(), all_points.transpose()
@@ -1048,7 +836,7 @@ def cluster_combine_dist(locs):
 
 @_numba.jit(nopython=True)
 def get_link_groups(locs, d_max, max_dark_time, group):
-    """ Assumes that locs are sorted by frame """
+    """Assumes that locs are sorted by frame"""
     frame = locs.frame
     x = locs.x
     y = locs.y
@@ -1106,7 +894,7 @@ def _get_next_loc_index_in_link_group(
             break
     else:
         max_index = N
-    d_max_2 = d_max ** 2
+    d_max_2 = d_max**2
     for j in range(min_index, max_index):
         if group[j] == current_group:
             if link_group[j] == -1:
@@ -1153,9 +941,7 @@ def _link_group_weighted_mean(
 ):
     sum_weights = _link_group_sum(weights, link_group, n_locs, n_groups)
     return (
-        _link_group_mean(
-            column * weights, link_group, n_locs, n_groups, sum_weights
-        ),
+        _link_group_mean(column * weights, link_group, n_locs, n_groups, sum_weights),
         sum_weights,
     )
 
@@ -1196,27 +982,21 @@ def link_loc_groups(locs, info, link_group, remove_ambiguous_lengths=True):
         )
         columns["frame"] = first_frame_
     if hasattr(locs, "x"):
-        weights_x = 1 / locs.lpx ** 2
+        weights_x = 1 / locs.lpx**2
         columns["x"], sum_weights_x_ = _link_group_weighted_mean(
             locs.x, weights_x, link_group, n_locs, n_groups, n_
         )
     if hasattr(locs, "y"):
-        weights_y = 1 / locs.lpy ** 2
+        weights_y = 1 / locs.lpy**2
         columns["y"], sum_weights_y_ = _link_group_weighted_mean(
             locs.y, weights_y, link_group, n_locs, n_groups, n_
         )
     if hasattr(locs, "photons"):
-        columns["photons"] = _link_group_sum(
-            locs.photons, link_group, n_locs, n_groups
-        )
+        columns["photons"] = _link_group_sum(locs.photons, link_group, n_locs, n_groups)
     if hasattr(locs, "sx"):
-        columns["sx"] = _link_group_mean(
-            locs.sx, link_group, n_locs, n_groups, n_
-        )
+        columns["sx"] = _link_group_mean(locs.sx, link_group, n_locs, n_groups, n_)
     if hasattr(locs, "sy"):
-        columns["sy"] = _link_group_mean(
-            locs.sy, link_group, n_locs, n_groups, n_
-        )
+        columns["sy"] = _link_group_mean(locs.sy, link_group, n_locs, n_groups, n_)
     if hasattr(locs, "bg"):
         columns["bg"] = _link_group_sum(locs.bg, link_group, n_locs, n_groups)
     if hasattr(locs, "x"):
@@ -1240,39 +1020,31 @@ def link_loc_groups(locs, info, link_group, remove_ambiguous_lengths=True):
             locs.iterations, link_group, n_locs, n_groups, n_
         )
     if hasattr(locs, "z"):
-        columns["z"] = _link_group_mean(
-            locs.z, link_group, n_locs, n_groups, n_
-        )
+        columns["z"] = _link_group_mean(locs.z, link_group, n_locs, n_groups, n_)
     if hasattr(locs, "d_zcalib"):
         columns["d_zcalib"] = _link_group_mean(
             locs.d_zcalib, link_group, n_locs, n_groups, n_
         )
     if hasattr(locs, "group"):
-        columns["group"] = _link_group_last(
-            locs.group, link_group, n_locs, n_groups
-        )
+        columns["group"] = _link_group_last(locs.group, link_group, n_locs, n_groups)
     if hasattr(locs, "frame"):
         columns["len"] = last_frame_ - first_frame_ + 1
     columns["n"] = n_
     if hasattr(locs, "photons"):
         columns["photon_rate"] = _np.float32(columns["photons"] / n_)
-    linked_locs = _np.rec.array(
-        list(columns.values()), names=list(columns.keys())
-    )
+    linked_locs = _np.rec.array(list(columns.values()), names=list(columns.keys()))
     if remove_ambiguous_lengths:
-        valid = _np.logical_and(
-            first_frame_ > 0, last_frame_ < info[0]["Frames"]
-        )
+        valid = _np.logical_and(first_frame_ > 0, last_frame_ < info[0]["Frames"])
         linked_locs = linked_locs[valid]
     return linked_locs
 
 
 def localization_precision(photons, s, bg, em):
     """
-    Calculates the theoretical localization preicision
+    Calculates the theoretical localization precision
     according to Mortensen et al., Nat Meth, 2010
     """
-    s2 = s ** 2
+    s2 = s**2
     sa2 = s2 + 1 / 12
     v = sa2 * (16 / 9 + (8 * _np.pi * sa2 * bg) / photons) / photons
     if em:
@@ -1280,6 +1052,27 @@ def localization_precision(photons, s, bg, em):
     with _np.errstate(invalid="ignore"):
         return _np.sqrt(v)
 
+def n_segments(info, segmentation):
+    n_frames = info[0]["Frames"]
+    return int(_np.round(n_frames / segmentation))
+
+def segment(locs, info, segmentation, kwargs={}, callback=None):
+    Y = info[0]["Height"]
+    X = info[0]["Width"]
+    n_frames = info[0]["Frames"]
+    n_seg = n_segments(info, segmentation)
+    bounds = _np.linspace(0, n_frames - 1, n_seg + 1, dtype=_np.uint32)
+    segments = _np.zeros((n_seg, Y, X))
+    if callback is not None:
+        callback(0)
+    for i in _trange(n_seg, desc="Generating segments", unit="segments"):
+        segment_locs = locs[
+            (locs.frame >= bounds[i]) & (locs.frame < bounds[i + 1])
+        ]
+        _, segments[i] = _render.render(segment_locs, info, **kwargs)
+        if callback is not None:
+            callback(i + 1)
+    return bounds, segments
 
 def undrift(
     locs,
@@ -1289,7 +1082,7 @@ def undrift(
     segmentation_callback=None,
     rcc_callback=None,
 ):
-    bounds, segments = _render.segment(
+    bounds, segments = segment(
         locs,
         info,
         segmentation,
@@ -1371,9 +1164,7 @@ def groupprops(locs, callback=None):
     n = len(group_ids)
     n_cols = len(locs.dtype)
     names = ["group", "n_events"] + list(
-        _itertools.chain(
-            *[(_ + "_mean", _ + "_std") for _ in locs.dtype.names]
-        )
+        _itertools.chain(*[(_ + "_mean", _ + "_std") for _ in locs.dtype.names])
     )
     formats = ["i4", "i4"] + 2 * n_cols * ["f4"]
     groups = _np.recarray(n, formats=formats, names=names)
@@ -1393,53 +1184,75 @@ def groupprops(locs, callback=None):
     return groups
 
 
-def calculate_fret(acc_locs, don_locs):
-    """
-    Calculate the FRET efficiceny in picked regions, this is for one trace
-    """
-    fret_dict = {}
-    if len(acc_locs) == 0:
-        max_frames = _np.max(don_locs["frame"])
-    elif len(don_locs) == 0:
-        max_frames = _np.max(acc_locs["frame"])
+# def calculate_fret(acc_locs, don_locs):
+#     """
+#     Calculate the FRET efficiency in picked regions, this is for one trace
+#     """
+#     fret_dict = {}
+#     if len(acc_locs) == 0:
+#         max_frames = _np.max(don_locs["frame"])
+#     elif len(don_locs) == 0:
+#         max_frames = _np.max(acc_locs["frame"])
+#     else:
+#         max_frames = _np.max([_np.max(acc_locs["frame"]), _np.max(don_locs["frame"])])
+
+#     # Initialize a vector filled with zeros for the duration of the movie
+#     xvec = _np.arange(max_frames + 1)
+#     yvec = xvec[:] * 0
+#     acc_trace = yvec.copy()
+#     don_trace = yvec.copy()
+#     # Fill vector with the photon numbers of events that happend
+#     acc_trace[acc_locs["frame"]] = acc_locs["photons"] - acc_locs["bg"]
+#     don_trace[don_locs["frame"]] = don_locs["photons"] - don_locs["bg"]
+
+#     # Calculate the FRET efficiency
+#     fret_trace = acc_trace / (acc_trace + don_trace)
+#     # Only select FRET values between 0 and 1
+#     selector = _np.logical_and(fret_trace > 0, fret_trace < 1)
+
+#     # Select the final fret events based on the 0 to 1 range
+#     fret_events = fret_trace[selector]
+#     fret_timepoints = _np.arange(len(fret_trace))[selector]
+
+#     f_locs = []
+#     if len(fret_timepoints) > 0:
+#         # Calculate FRET locs: Select the locs when FRET happens
+#         sel_locs = []
+#         for element in fret_timepoints:
+#             sel_locs.append(don_locs[don_locs["frame"] == element])
+
+#         f_locs = stack_arrays(sel_locs, asrecarray=True, usemask=False)
+#         f_locs = _lib.append_to_rec(f_locs, _np.array(fret_events), "fret")
+
+#     fret_dict["fret_events"] = _np.array(fret_events)
+#     fret_dict["fret_timepoints"] = fret_timepoints
+#     fret_dict["acc_trace"] = acc_trace
+#     fret_dict["don_trace"] = don_trace
+#     fret_dict["frames"] = xvec
+#     fret_dict["maxframes"] = max_frames
+
+#     return fret_dict, f_locs
+
+def nn_analysis(
+    x1, x2, 
+    y1, y2, 
+    z1, z2,
+    nn_count, 
+    same_channel, 
+):
+    # coordinates are in nm
+    if z1 is not None: # 3D
+        input1 = _np.stack((x1, y1, z1)).T
+        input2 = _np.stack((x2, y2, z2)).T
+    else: # 2D
+        input1 = _np.stack((x1, y1)).T
+        input2 = _np.stack((x2, y2)).T
+    if same_channel:
+        model = NN(n_neighbors=nn_count+1)
     else:
-        max_frames = _np.max(
-            [_np.max(acc_locs["frame"]), _np.max(don_locs["frame"])]
-        )
-
-    # Initialize a vector filled with zeros for the duration of the movie
-    xvec = _np.arange(max_frames + 1)
-    yvec = xvec[:] * 0
-    acc_trace = yvec.copy()
-    don_trace = yvec.copy()
-    # Fill vector with the photon numbers of events that happend
-    acc_trace[acc_locs["frame"]] = acc_locs["photons"] - acc_locs["bg"]
-    don_trace[don_locs["frame"]] = don_locs["photons"] - don_locs["bg"]
-
-    # Calculate the FRET efficiency
-    fret_trace = acc_trace / (acc_trace + don_trace)
-    # Only select FRET values between 0 and 1
-    selector = _np.logical_and(fret_trace > 0, fret_trace < 1)
-
-    # Select the final fret events based on the 0 to 1 range
-    fret_events = fret_trace[selector]
-    fret_timepoints = _np.arange(len(fret_trace))[selector]
-
-    f_locs = []
-    if len(fret_timepoints) > 0:
-        # Calculate FRET locs: Select the locs when FRET happens
-        sel_locs = []
-        for element in fret_timepoints:
-            sel_locs.append(don_locs[don_locs["frame"] == element])
-
-        f_locs = stack_arrays(sel_locs, asrecarray=True, usemask=False)
-        f_locs = _lib.append_to_rec(f_locs, _np.array(fret_events), "fret")
-
-    fret_dict["fret_events"] = _np.array(fret_events)
-    fret_dict["fret_timepoints"] = fret_timepoints
-    fret_dict["acc_trace"] = acc_trace
-    fret_dict["don_trace"] = don_trace
-    fret_dict["frames"] = xvec
-    fret_dict["maxframes"] = max_frames
-
-    return fret_dict, f_locs
+        model = NN(n_neighbors=nn_count)
+    model.fit(input1)
+    nn, _ = model.kneighbors(input2)
+    if same_channel:
+        nn = nn[:, 1:] # ignore the zero distance
+    return nn
