@@ -969,6 +969,11 @@ class TiffMultiMap(AbstractPicassoMovie):
             base, ext = _ospath.splitext(self.path)  
             base = _re.escape(base)
             pattern = _re.compile(base + r"_(\d*).tif")
+        else:
+            # only one extension (.tif)
+            base, ext = _ospath.splitext(self.path)  
+            base = _re.escape(base)
+            pattern = _re.compile(base + r"_(\d*).tif")
         entries = [_.path for _ in _os.scandir(self.dir) if _.is_file()]
         matches = [_re.match(pattern, _) for _ in entries]
         matches = [_ for _ in matches if _ is not None]
